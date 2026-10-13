@@ -82,6 +82,9 @@ const checklist = [
 function App() {
   const [website, setWebsite] = useState("");
   const [auditMessage, setAuditMessage] = useState("");
+  const [auditResult, setAuditResult] = useState(null);
+  const [auditLoading, setAuditLoading] = useState(false);
+  const [strategy, setStrategy] = useState("mobile");
   const [checkedItems, setCheckedItems] = useState([]);
 
   const totalItems = checklist.reduce(
@@ -94,38 +97,50 @@ function App() {
     [checkedItems.length, totalItems]
   );
 
-  function handleAuditSubmit(event) {
+  async function handleAuditSubmit(event) {
     event.preventDefault();
     setAuditMessage("");
+    setAuditResult(null);
 
     let parsedUrl;
-
     try {
-      const normalizedUrl = /^https?:\/\//i.test(website.trim())
-        ? website.trim()
-        : `https://${website.trim()}`;
-
+      const trimmed = website.trim();
+      const normalizedUrl = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
       parsedUrl = new URL(normalizedUrl);
-
       if (
         !["http:", "https:"].includes(parsedUrl.protocol) ||
         !parsedUrl.hostname.includes(".") ||
         parsedUrl.hostname.startsWith(".") ||
-        parsedUrl.hostname.endsWith(".")
+        parsedUrl.hostname.endsWith(".") ||
+        parsedUrl.username ||
+        parsedUrl.password
       ) {
         throw new Error("Invalid website address");
       }
     } catch {
-      setAuditMessage(
-        "Enter a valid website address, such as example.com."
-      );
+      setAuditMessage("Enter a valid public website address, such as example.com.");
       return;
     }
 
     setWebsite(parsedUrl.href);
-    setAuditMessage(
-      "Your website address is valid. The live audit engine is not connected yet, so no website score or audit results have been generated."
-    );
+    setAuditLoading(true);
+    try {
+      const response = await fetch("/api/pagespeed", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: parsedUrl.href, strategy })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.error || "The audit could not be completed. Please try again shortly.");
+      }
+      setAuditResult(payload);
+      setAuditMessage("Audit complete. These scores come from Google's Lighthouse test for the selected device.");
+    } catch (error) {
+      setAuditMessage(error.message || "The audit could not be completed. Please try again.");
+    } finally {
+      setAuditLoading(false);
+    }
   }
 
   function toggleItem(itemId) {
@@ -254,19 +269,75 @@ function App() {
                 onChange={(event) => {
                   setWebsite(event.target.value);
                   setAuditMessage("");
+                  setAuditResult(null);
                 }}
                 required
               />
-              <button className="button button-primary" type="submit">
-                Get started →
+              <select className="strategy-select" aria-label="Audit device" value={strategy} onChange={(event) => setStrategy(event.target.value)}>
+                <option value="mobile">Mobile</option>
+                <option value="desktop">Desktop</option>
+              </select>
+              <button className="button button-primary" type="submit" disabled={auditLoading}>
+                {auditLoading ? "Auditing…" : "Run free audit →"}
               </button>
             </div>
             {auditMessage && (
               <p className="form-message" role="status">{auditMessage}</p>
             )}
             <p className="form-help">
-              No fabricated scores. Actual audit findings will appear once the audit engine is connected.
+              Uses Google PageSpeed Insights and Lighthouse. Results may take up to a minute; no fabricated scores.
             </p>
+            {auditLoading && (
+              <div className="audit-loading" role="status">
+                <span className="loading-spinner" /> Running a real {strategy} audit. This can take up to a minute.
+              </div>
+            )}
+            {auditResult && (
+              <section className="audit-results" aria-live="polite">
+                <div className="audit-results-heading">
+                  <div>
+                    <span className="section-kicker">LIGHTHOUSE REPORT</span>
+                    <h3>Results for {auditResult.finalUrl || auditResult.url}</h3>
+                    <p>Tested on {auditResult.strategy}. Scores are lab measurements and can vary between runs.</p>
+                  </div>
+                  <span className="audit-timestamp">{new Date(auditResult.fetchedAt).toLocaleString()}</span>
+                </div>
+                <div className="score-grid">
+                  {auditResult.scores.map((score) => (
+                    <article className="score-card" key={score.key}>
+                      <div className={`score-ring score-${score.rating}`}><strong>{score.value ?? "—"}</strong></div>
+                      <h4>{score.label}</h4>
+                      <span className={`score-rating rating-${score.rating}`}>{score.ratingLabel}</span>
+                    </article>
+                  ))}
+                </div>
+                <div className="audit-details-grid">
+                  <article className="audit-detail-card">
+                    <h4>Core Web Vitals & loading metrics</h4>
+                    <dl className="metrics-list">
+                      {auditResult.metrics.map((metric) => (
+                        <div key={metric.key}><dt>{metric.label}</dt><dd>{metric.value}</dd></div>
+                      ))}
+                    </dl>
+                  </article>
+                  <article className="audit-detail-card">
+                    <h4>Recommended improvements</h4>
+                    {auditResult.opportunities.length ? (
+                      <ul className="opportunity-list">
+                        {auditResult.opportunities.map((item) => (
+                          <li key={item.id}>
+                            <strong>{item.title}</strong>
+                            {item.displayValue && <span>{item.displayValue}</span>}
+                            <p>{item.description}</p>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : <p>No Lighthouse opportunities were returned for this run. Review the category scores and rerun if needed.</p>}
+                  </article>
+                </div>
+                <p className="checklist-disclaimer">These results reflect an automated Lighthouse lab test, not a guarantee of search ranking or real-world user experience. Google may return no field data for low-traffic websites.</p>
+              </section>
+            )}
           </form>
         </section>
 
