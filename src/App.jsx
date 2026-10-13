@@ -334,10 +334,48 @@ function App() {
                     ) : <p>No Lighthouse opportunities were returned for this run. Review the category scores and rerun if needed.</p>}
                   </article>
                 </div>
+                <div className="result-cta">
+                  <div>
+                    <strong>Want help fixing these findings?</strong>
+                    <p>Send this website address to JohnKay Fundz to discuss practical next steps.</p>
+                  </div>
+                  <a className="button button-primary" href={`https://wa.me/2348188840165?text=${encodeURIComponent(`Hi JohnKay, I ran a SiteLift audit for ${auditResult.finalUrl || auditResult.url} and would like help improving it.`)}`} target="_blank" rel="noreferrer">Discuss improvements ↗</a>
+                </div>
                 <p className="checklist-disclaimer">These results reflect an automated Lighthouse lab test, not a guarantee of search ranking or real-world user experience. Google may return no field data for low-traffic websites.</p>
               </section>
             )}
           </form>
+        </section>
+
+        <section className="conversion-section" id="get-help">
+          <div className="conversion-copy">
+            <span className="section-kicker">WANT A HAND?</span>
+            <h2>Turn your website findings into real improvements.</h2>
+            <p>
+              Not sure what to fix first? Send me your website and business type.
+              I’ll help you identify three practical improvements. If you want me
+              to implement them, I’ll explain the scope and price before any work begins.
+            </p>
+            <div className="conversion-actions">
+              <a
+                className="button button-primary"
+                href="https://wa.me/2348188840165?text=Hi%20JohnKay%2C%20I%20used%20SiteLift%20and%20would%20like%20help%20improving%20my%20website.%20My%20website%20is%3A%20"
+                target="_blank"
+                rel="noreferrer"
+              >
+                Get help on WhatsApp <span aria-hidden="true">↗</span>
+              </a>
+              <a className="button button-secondary" href="https://johnkayfundz.github.io/portfolio-website/" target="_blank" rel="noreferrer">
+                View my work
+              </a>
+            </div>
+            <p className="conversion-note">No payment required to start a conversation. Any paid work is agreed with you first.</p>
+          </div>
+          <div className="conversion-points">
+            <div><span>01</span><p><strong>Website improvements</strong><small>Mobile layout, speed, and usability</small></p></div>
+            <div><span>02</span><p><strong>Business websites</strong><small>Clear services, trust, and contact options</small></p></div>
+            <div><span>03</span><p><strong>Online stores & React apps</strong><small>Practical features built around your goals</small></p></div>
+          </div>
         </section>
 
         <section className="how-section" id="how-it-works">
