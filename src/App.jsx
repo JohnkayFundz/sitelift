@@ -250,8 +250,7 @@ function App() {
             <span className="section-kicker">START HERE</span>
             <h2>What can we improve on your website?</h2>
             <p>
-              Enter your website address to get started. Live auditing
-              will be connected in the next development stage.
+              Enter a public website address to run a real Google Lighthouse audit.
             </p>
           </div>
 
