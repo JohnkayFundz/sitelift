@@ -272,7 +272,7 @@ function App() {
                 }}
                 required
               />
-              <select className="strategy-select" aria-label="Audit device" value={strategy} onChange={(event) => setStrategy(event.target.value)}>
+              <select className="strategy-select" aria-label="Audit device" value={strategy} disabled={auditLoading} onChange={(event) => { setStrategy(event.target.value); setAuditMessage(""); setAuditResult(null); }}>
                 <option value="mobile">Mobile</option>
                 <option value="desktop">Desktop</option>
               </select>
