@@ -21,3 +21,16 @@
 .result-cta .button{flex-shrink:0}
 @media(max-width:850px){.conversion-section{width:min(100% - 32px,650px);grid-template-columns:1fr;padding:28px 22px;gap:22px}}
 @media(max-width:560px){.conversion-section{padding:25px 16px}.conversion-actions{align-items:stretch}.conversion-actions .button{flex:1 1 100%}.result-cta{align-items:stretch;flex-direction:column}}
+
+.theme-toggle{border:1px solid #dce3ee;border-radius:10px;padding:10px 12px;background:#fff;color:#33415b;font-size:12px;font-weight:750;cursor:pointer}
+.theme-dark{background:#0b1220;color:#e6edf8}
+.theme-dark .brand strong,.theme-dark .hero h1,.theme-dark .section-heading h2,.theme-dark .checklist-header h2{color:#edf3ff}
+.theme-dark .hero-description,.theme-dark .section-heading p,.theme-dark .checklist-header p,.theme-dark .footer p{color:#a7b5cc}
+.theme-dark .preview-card,.theme-dark .checker-section,.theme-dark .score-card,.theme-dark .audit-detail-card,.theme-dark .benefit-card,.theme-dark .checklist-group,.theme-dark .progress-card,.theme-dark .checklist-bottom{background:#111c2f;border-color:#27364d;color:#e6edf8}
+.theme-dark .preview-row,.theme-dark .metrics-list div,.theme-dark .checklist-item,.theme-dark .group-heading{border-color:#27364d}
+.theme-dark .preview-row strong,.theme-dark .audit-results-heading h3,.theme-dark .audit-detail-card h4,.theme-dark .score-card h4,.theme-dark .metrics-list dd,.theme-dark .opportunity-list strong,.theme-dark .group-heading h3,.theme-dark .checklist-bottom strong,.theme-dark .benefit-card h3{color:#e6edf8}
+.theme-dark .preview-description,.theme-dark .preview-row small,.theme-dark .metrics-list dt,.theme-dark .opportunity-list li,.theme-dark .checklist-text,.theme-dark .benefit-card p{color:#a7b5cc}
+.theme-dark .checklist-section{background:#101a2b}
+.theme-dark .url-form .input-row,.theme-dark .strategy-select,.theme-dark .theme-toggle,.theme-dark .button-secondary{background:#111c2f;color:#e6edf8;border-color:#34445e}
+.theme-dark .url-form input{color:#edf3ff}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import "./App.css";
 
 const checklist = [
@@ -80,12 +80,39 @@ const checklist = [
 ];
 
 function App() {
-  const [website, setWebsite] = useState("");
+  const [website, setWebsite] = useState(() => new URLSearchParams(window.location.search).get("url") || "");
   const [auditMessage, setAuditMessage] = useState("");
   const [auditResult, setAuditResult] = useState(null);
   const [auditLoading, setAuditLoading] = useState(false);
-  const [strategy, setStrategy] = useState("mobile");
-  const [checkedItems, setCheckedItems] = useState([]);
+  const [strategy, setStrategy] = useState(() => new URLSearchParams(window.location.search).get("strategy") === "desktop" ? "desktop" : "mobile");
+  const [checkedItems, setCheckedItems] = useState(() => {
+    try {
+      const value = JSON.parse(localStorage.getItem("sitelift-checklist-v1") || "[]");
+      return Array.isArray(value) ? value.filter((id) => typeof id === "string" && /^\d+-\d+$/.test(id)) : [];
+    } catch { return []; }
+  });
+  const [darkMode, setDarkMode] = useState(() => {
+    try { return localStorage.getItem("sitelift-theme") === "dark"; } catch { return false; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem("sitelift-checklist-v1", JSON.stringify(checkedItems)); } catch { /* storage may be unavailable */ }
+  }, [checkedItems]);
+  useEffect(() => {
+    try { localStorage.setItem("sitelift-theme", darkMode ? "dark" : "light"); } catch { /* storage may be unavailable */ }
+    document.documentElement.dataset.theme = darkMode ? "dark" : "light";
+    const meta = document.querySelector('meta[name="description"]');
+    document.title = auditResult ? "SiteLift audit — " + new URL(auditResult.finalUrl || auditResult.url).hostname : "SiteLift — Free Website Audit & Improvement Checklist";
+    if (meta && auditResult) meta.content = "Lighthouse report for " + (auditResult.finalUrl || auditResult.url) + ". Review performance, accessibility, best practices, SEO, and prioritized improvements.";
+    document.getElementById("sitelift-jsonld")?.remove();
+    const schema = document.createElement("script");
+    schema.id = "sitelift-jsonld";
+    schema.type = "application/ld+json";
+    schema.textContent = JSON.stringify([
+      { "@context": "https://schema.org", "@type": "WebSite", name: "SiteLift", url: "https://sitelift.vercel.app/" },
+      { "@context": "https://schema.org", "@type": "SoftwareApplication", name: "SiteLift Website Audit", applicationCategory: "WebApplication", operatingSystem: "Any", offers: { "@type": "Offer", price: "0", priceCurrency: "NGN" }, url: "https://sitelift.vercel.app/" }
+    ]);
+    document.head.appendChild(schema);
+  }, [checkedItems, darkMode, auditResult]);
 
   const totalItems = checklist.reduce(
     (total, group) => total + group.items.length,
@@ -152,7 +179,7 @@ function App() {
   }
 
   return (
-    <div className="site-shell">
+    <div className={darkMode ? "site-shell theme-dark" : "site-shell"}>
       <header className="topbar">
         <a className="brand" href="#home" aria-label="SiteLift home">
           <span className="brand-mark">S</span>
@@ -165,6 +192,7 @@ function App() {
         <nav className="navigation" aria-label="Main navigation">
           <a href="#how-it-works">How it works</a>
           <a href="#checklist">Free checklist</a>
+          <button className="theme-toggle" type="button" onClick={() => setDarkMode((value) => !value)}>{darkMode ? "☀ Light" : "☾ Dark"}</button>
           <a className="nav-cta" href="#checker">Check my website ↗</a>
         </nav>
       </header>
@@ -411,7 +439,7 @@ function App() {
               <h2>The 50-point website checklist</h2>
               <p>
                 Review your website one item at a time. Your progress is
-                tracked while this page remains open.
+                saved locally on this device and remains available after refresh.
               </p>
             </div>
             <div className="progress-card">

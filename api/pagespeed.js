@@ -1,5 +1,5 @@
-const WINDOW_MS = 60_000;
-const MAX_REQUESTS_PER_WINDOW = 4;
+const WINDOW_MS = 10 * 60_000;
+const MAX_REQUESTS_PER_WINDOW = 5;
 const MAX_TRACKED_CLIENTS = 10_000;
 const requestCounts = new Map();
 
@@ -29,7 +29,10 @@ export function isPublicWebUrl(value) {
       host.endsWith(".test") || host.endsWith(".invalid") ||
       host.endsWith(".example")) return false;
   if (!host.includes(".") || host.startsWith(".") || host.endsWith(".")) return false;
+  // Reject IP literals entirely; this endpoint only needs public DNS hostnames.
   if (/^[0-9.]+$/.test(host) || host.includes(":")) return false;
+  if (host.split(".").some((label) => !label || label.length > 63 ||
+      !/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/i.test(label))) return false;
   if (parsed.port && !["80", "443"].includes(parsed.port)) return false;
   if (host === "metadata.google.internal" || host === "metadata") return false;
 
@@ -72,9 +75,9 @@ export default async function handler(req, res) {
   }
 
   if (!allowRequest(req)) {
-    res.setHeader("Retry-After", "60");
+    res.setHeader("Retry-After", "600");
     return send(res, 429, {
-      error: "Too many audits from this connection. Please wait one minute and try again."
+      error: "Too many audits from this connection. Please wait ten minutes and try again."
     });
   }
 
@@ -118,9 +121,9 @@ export default async function handler(req, res) {
 
     if (!upstream.ok) {
       if (upstream.status === 429) {
-        res.setHeader("Retry-After", "60");
+        res.setHeader("Retry-After", "600");
         return send(res, 429, {
-          error: "Google's PageSpeed service is temporarily rate-limited. Please wait a little and retry."
+          error: "Google's PageSpeed service is temporarily rate-limited. Please wait ten minutes and retry."
         });
       }
       if ([400, 403].includes(upstream.status)) {

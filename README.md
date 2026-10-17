@@ -33,6 +33,14 @@ Vercel deploys the connected repository. Pull requests should pass the GitHub Ac
 
 ## Production notes
 
-- Response throttling in the API route is process-local and best-effort on serverless instances; it is not a substitute for a distributed rate limiter or a billing quota.
+- Response throttling allows up to five audits per IP per ten-minute window per serverless instance. It is process-local and best-effort on serverless instances; before significant public traffic, use a shared rate limiter and enforce a Google API quota.
 - Monitor PageSpeed API quotas and Google Cloud billing/usage limits.
 - Re-run audits when decisions depend on scores because Lighthouse results can vary between runs.
+
+
+## Frontend persistence and SEO
+
+- Checklist selections and the light/dark preference are saved in browser local storage on the current device; they are not synced across browsers.
+- The application adds WebSite and SoftwareApplication JSON-LD and updates the document title and description when a report is displayed. As this is a client-rendered Vite app, landing pages that need reliable indexing should eventually be prerendered or server-rendered.
+- URL query parameters can prefill the target website and device for a fresh audit; they do not publish a durable, immutable copy of previous scores.
+- Paystack is intentionally not enabled until a durable purchase record, PDF generation/storage, and one-time authorized download flow are implemented and configured. A webhook signature check alone is not sufficient to securely release a paid report.
