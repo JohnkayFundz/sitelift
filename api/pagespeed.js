@@ -200,7 +200,12 @@ export default async function handler(req, res) {
       }))
       .sort((a, b) => (b.savingsMs - a.savingsMs) || (b.savingsBytes - a.savingsBytes) || (a.score - b.score))
       .slice(0, 8)
-      .map(({ score, savingsMs, savingsBytes, ...item }) => item);
+      .map((item) => {
+        delete item.score;
+        delete item.savingsMs;
+        delete item.savingsBytes;
+        return item;
+      });
 
     return send(res, 200, {
       url,
