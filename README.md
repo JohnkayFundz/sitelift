@@ -44,3 +44,14 @@ Vercel deploys the connected repository. Pull requests should pass the GitHub Ac
 - The application adds WebSite and SoftwareApplication JSON-LD and updates the document title and description when a report is displayed. As this is a client-rendered Vite app, landing pages that need reliable indexing should eventually be prerendered or server-rendered.
 - URL query parameters can prefill the target website and device for a fresh audit; they do not publish a durable, immutable copy of previous scores.
 - Paystack is intentionally not enabled until a durable purchase record, PDF generation/storage, and one-time authorized download flow are implemented and configured. A webhook signature check alone is not sufficient to securely release a paid report.
+
+
+## Durable reports, shared rate limiting and paid PDFs
+
+Required Vercel environment variables: PAGESPEED_API_KEY, UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, PAYSTACK_SECRET_KEY and APP_BASE_URL. Set server secrets only in Vercel; never prefix them with VITE_ or commit their values. The audit endpoint fails closed when shared Redis limiting is not configured.
+
+Apply supabase/migrations/202610170001_sitelift_audits_payments.sql to the dedicated SiteLift Supabase project. It creates the audits and audit_payments tables, enables RLS, revokes browser-role table access and creates a private audit-reports bucket. Do not apply this migration to another product's Supabase project.
+
+POST /api/paystack/initialize records a pending ₦2,500 transaction and initializes Paystack checkout. /api/paystack/webhook validates the raw request HMAC-SHA512 signature, independently verifies transaction status/amount/currency with Paystack, generates a PDF and stores it in private Supabase Storage. GET /api/paystack/status?reference=... creates a one-hour signed URL only after payment is recorded as paid. Configure Paystack webhooks to https://sitelift.vercel.app/api/paystack/webhook.
+
+Successful audits are persisted before response and return /audit/<uuid>. Static SEO landing pages are published at /check/mobile-speed-lagos and /tools/website-speed-checker, with canonical metadata, JSON-LD, internal links and sitemap entries.

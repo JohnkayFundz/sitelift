@@ -34,3 +34,11 @@
 .theme-dark .url-form .input-row,.theme-dark .strategy-select,.theme-dark .theme-toggle,.theme-dark .button-secondary{background:#111c2f;color:#e6edf8;border-color:#34445e}
 .theme-dark .url-form input{color:#edf3ff}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}
+
+.paid-report-box{display:flex;flex-direction:column;align-items:flex-start;gap:10px;margin-top:18px;padding:20px;border:1px solid #dce6f5;border-radius:16px;background:#f8faff}
+.paid-report-box h4{margin:0;color:#18263d}.paid-report-box p{margin:0;color:#64748b;font-size:12px;line-height:1.6}
+.report-email-label{display:flex;flex-direction:column;gap:6px;width:min(100%,380px);color:#42526b;font-size:12px;font-weight:700}
+.report-email-label input{padding:12px;border:1px solid #d7e0ee;border-radius:9px;background:#fff;color:#17243a;font:inherit}
+.paid-report-box button:disabled{opacity:.6;cursor:not-allowed}.theme-dark .paid-report-box{background:#101a2b;border-color:#27364d}
+.theme-dark .paid-report-box h4{color:#e6edf8}.theme-dark .report-email-label{color:#c0cce0}
+.theme-dark .report-email-label input{background:#111c2f;border-color:#34445e;color:#e6edf8}
