@@ -26,3 +26,47 @@ export function createAuditPdf(audit) {
   pdf += "trailer\n<< /Size " + (objects.length + 1) + " /Root 1 0 R >>\nstartxref\n" + xref + "\n%%EOF";
   return Buffer.from(pdf, "utf8");
 }
+
+export async function processVerifiedPaystackPayment(reference) {
+  const secret = process.env.PAYSTACK_SECRET_KEY;
+  if (!secret) throw new Error("Paystack is not configured");
+  const db = supabaseAdmin();
+  const { data: payment, error } = await db.from("audit_payments")
+    .select("id,audit_id,amount,currency,status,pdf_path")
+    .eq("reference", reference).maybeSingle();
+  if (error) throw error;
+  if (!payment) return { status: "not_found" };
+  if (payment.status === "paid" && payment.pdf_path) return { status: "paid", pdfPath: payment.pdf_path, duplicate: true };
+
+  const verifyResponse = await fetch("https://api.paystack.co/transaction/verify/" + encodeURIComponent(reference), {
+    headers: { Authorization: "Bearer " + secret },
+    signal: AbortSignal.timeout(15000)
+  });
+  const verified = await verifyResponse.json().catch(() => ({}));
+  if (!verifyResponse.ok || !verified.status) throw new Error("Paystack transaction verification request failed");
+  const transaction = verified.data;
+  if (transaction?.status !== "success") return { status: payment.status || "pending" };
+  if (transaction.reference !== reference || transaction.currency !== "NGN" || payment.currency !== "NGN" || Number(transaction.amount) !== Number(payment.amount)) {
+    throw new Error("Verified Paystack transaction does not match the pending payment");
+  }
+
+  const { data: audit, error: auditError } = await db.from("audits")
+    .select("id,target_url,final_url,strategy,report,created_at")
+    .eq("id", payment.audit_id).single();
+  if (auditError) throw auditError;
+  const pdf = createAuditPdf(audit);
+  const path = audit.id + "/" + reference + ".pdf";
+  const { error: uploadError } = await db.storage.from("audit-reports")
+    .upload(path, pdf, { contentType: "application/pdf", upsert: false, cacheControl: "3600" });
+  if (uploadError && !String(uploadError.message).toLowerCase().includes("already exists")) throw uploadError;
+
+  const { error: updateError } = await db.from("audit_payments").update({
+    status: "paid",
+    paystack_transaction_id: String(transaction.id),
+    paid_at: new Date().toISOString(),
+    pdf_path: path,
+    webhook_processed_at: new Date().toISOString()
+  }).eq("id", payment.id);
+  if (updateError) throw updateError;
+  return { status: "paid", pdfPath: path };
+}
