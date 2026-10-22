@@ -13,7 +13,8 @@ export function validSignature(raw, signature, secret) {
   const expected = createHmac("sha512", secret).update(raw).digest(); const supplied = Buffer.from(signature, "hex");
   return supplied.length === expected.length && timingSafeEqual(supplied, expected);
 }
-export default async function handler(req, res) {
+export function createPaystackWebhookHandler({ processPayment = processVerifiedPaystackPayment } = {}) {
+  return async function handler(req, res) {
   if (req.method !== "POST") { res.setHeader("Allow", "POST"); return json(res, 405, { error: "Method not allowed" }); }
   const secret = process.env.PAYSTACK_SECRET_KEY;
   if (!secret) return json(res, 503, { error: "Webhook is not configured" });
@@ -22,7 +23,7 @@ export default async function handler(req, res) {
   let event; try { event = JSON.parse(raw.toString("utf8")); } catch { return json(res, 400, { error: "Invalid JSON" }); }
   if (event.event !== "charge.success" || !event.data?.reference) return json(res, 200, { received: true });
   try {
-    const result = await processVerifiedPaystackPayment(String(event.data.reference));
+    const result = await processPayment(String(event.data.reference));
     if (result.status === "not_found") return json(res, 404, { error: "Payment reference not found" });
     if (result.status === "processing") {
       // A concurrent delivery owns the atomic processing claim; acknowledge the
@@ -35,4 +36,7 @@ export default async function handler(req, res) {
     console.error("Paystack webhook processing failed", error?.message);
     return json(res, 500, { error: "Webhook processing failed; provider may retry" });
   }
+  };
 }
+
+export default createPaystackWebhookHandler();
