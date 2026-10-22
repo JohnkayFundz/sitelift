@@ -29,10 +29,12 @@ export function createAuditPdf(audit) {
   return Buffer.from(pdf, "utf8");
 }
 
-export async function processVerifiedPaystackPayment(reference) {
+export async function processVerifiedPaystackPayment(reference, dependencies = {}) {
   const secret = process.env.PAYSTACK_SECRET_KEY;
   if (!secret) throw new Error("Paystack is not configured");
-  const db = supabaseAdmin();
+  const getSupabaseAdmin = dependencies.supabaseAdmin || supabaseAdmin;
+  const generateAuditPdf = dependencies.createAuditPdf || createAuditPdf;
+  const db = getSupabaseAdmin();
   const { data: payment, error } = await db.from("audit_payments")
     .select("id,audit_id,amount,currency,status,pdf_path,download_token,token_expires_at,processing_started_at")
     .eq("reference", reference).maybeSingle();
@@ -104,7 +106,7 @@ export async function processVerifiedPaystackPayment(reference) {
       .select("id,target_url,final_url,strategy,report,created_at")
       .eq("id", payment.audit_id).single();
     if (auditError) throw auditError;
-    const pdf = createAuditPdf(audit);
+    const pdf = generateAuditPdf(audit);
     const path = audit.id + "/" + reference + ".pdf";
     const { error: uploadError } = await db.storage.from("audit-reports")
       .upload(path, pdf, { contentType: "application/pdf", upsert: false, cacheControl: "3600" });
