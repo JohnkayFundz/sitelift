@@ -88,6 +88,12 @@ function App() {
   const [paymentMessage, setPaymentMessage] = useState("");
   const [paymentLoading, setPaymentLoading] = useState(false);
   const [downloadUrl, setDownloadUrl] = useState("");
+  const [recoveryVisible, setRecoveryVisible] = useState(false);
+  const [recoveryReference, setRecoveryReference] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get("reference") || params.get("trxref") || "";
+  });
+  const [recoverySending, setRecoverySending] = useState(false);
   const [strategy, setStrategy] = useState(() => new URLSearchParams(window.location.search).get("strategy") === "desktop" ? "desktop" : "mobile");
   const [checkedItems, setCheckedItems] = useState(() => {
     try {
@@ -123,6 +129,14 @@ function App() {
       try {
         const response = await fetch("/api/paystack/status?reference=" + encodeURIComponent(reference) + "&token=" + encodeURIComponent(token));
         const result = await response.json();
+        if (response.status === 403 && result.reason === "expired_token") {
+          if (!cancelled) {
+            setRecoveryVisible(true);
+            setRecoveryReference(reference);
+            setPaymentMessage("Your 24-hour download link has expired. Enter the email address used at checkout and your payment reference to receive a fresh secure link.");
+          }
+          return;
+        }
         if (result.status === "paid" && result.downloadUrl) {
           if (!cancelled) { setDownloadUrl(result.downloadUrl); setPaymentMessage("Payment confirmed. Your secure download link expires in one hour."); }
           return;
@@ -134,6 +148,33 @@ function App() {
     check();
     return () => { cancelled = true; };
   }, []);
+  const requestFreshDownloadLink = async () => {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(paymentEmail.trim())) {
+      setPaymentMessage("Enter the email address used at checkout.");
+      return;
+    }
+    if (!/^sitelift_[0-9a-f-]{36}_[a-f0-9]{32}$/i.test(recoveryReference.trim())) {
+      setPaymentMessage("Enter the payment reference from your Paystack receipt.");
+      return;
+    }
+    setRecoverySending(true);
+    setPaymentMessage("");
+    try {
+      const response = await fetch("/api/paystack/resend-link", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reference: recoveryReference.trim(), email: paymentEmail.trim() })
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || "Secure link recovery is temporarily unavailable.");
+      setPaymentMessage(result.message || "If the reference and email match a paid record, a fresh download link has been sent to your email.");
+    } catch (error) {
+      setPaymentMessage(error.message || "Secure link recovery is temporarily unavailable. Please try again later.");
+    } finally {
+      setRecoverySending(false);
+    }
+  };
+
   const buyPdfReport = async () => {
     if (!auditResult?.auditId) { setPaymentMessage("Run an audit first to create a report."); return; }
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(paymentEmail)) { setPaymentMessage("Enter a valid email address for your receipt."); return; }
@@ -427,7 +468,18 @@ function App() {
                     {!downloadUrl && <label className="report-email-label">Email for payment receipt
                       <input type="email" autoComplete="email" value={paymentEmail} onChange={(event) => setPaymentEmail(event.target.value)} placeholder="you@example.com" />
                     </label>}
-                    {!downloadUrl && <button className="button button-secondary" type="button" disabled={paymentLoading || !auditResult.auditId} onClick={buyPdfReport}>{paymentLoading ? "Connecting to Paystack…" : "Pay ₦2,500 and get PDF"}</button>}
+                    {!downloadUrl && !recoveryVisible && <button className="button button-secondary" type="button" disabled={paymentLoading || !auditResult.auditId} onClick={buyPdfReport}>{paymentLoading ? "Connecting to Paystack…" : "Pay ₦2,500 and get PDF"}</button>}
+                    {recoveryVisible && !downloadUrl && (
+                      <div className="download-recovery-form">
+                        <label className="report-email-label">Payment reference
+                          <input type="text" autoComplete="off" value={recoveryReference} onChange={(event) => setRecoveryReference(event.target.value)} placeholder="sitelift_…" />
+                        </label>
+                        <button className="button button-secondary" type="button" disabled={recoverySending} onClick={requestFreshDownloadLink}>
+                          {recoverySending ? "Requesting secure link…" : "Email me a fresh secure link"}
+                        </button>
+                        <small>The link is sent only to the email address recorded at checkout. It is never displayed on this page.</small>
+                      </div>
+                    )}
                     {downloadUrl && <a className="button button-primary" href={downloadUrl} rel="noreferrer">Download secure PDF ↗</a>}
                     {paymentMessage && <p role="status">{paymentMessage}</p>}
                   </div>
