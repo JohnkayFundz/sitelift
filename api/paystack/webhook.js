@@ -24,6 +24,11 @@ export default async function handler(req, res) {
   try {
     const result = await processVerifiedPaystackPayment(String(event.data.reference));
     if (result.status === "not_found") return json(res, 404, { error: "Payment reference not found" });
+    if (result.status === "processing") {
+      // A concurrent delivery owns the atomic processing claim; acknowledge the
+      // retry so Paystack does not create a webhook retry storm.
+      return json(res, 200, { received: true, duplicate: true, processing: true });
+    }
     if (result.status !== "paid") return json(res, 400, { error: "Transaction is not confirmed as paid" });
     return json(res, 200, { received: true, duplicate: Boolean(result.duplicate) });
   } catch (error) {
