@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import { randomBytes } from "node:crypto";
 export function supabaseAdmin() {
   const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -8,6 +9,7 @@ export function supabaseAdmin() {
 export function json(res, status, body) {
   res.status(status); res.setHeader("Content-Type", "application/json; charset=utf-8");
   res.setHeader("Cache-Control", "no-store"); res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("Referrer-Policy", "no-referrer");
   return res.json(body);
 }
 export function escapePdfText(value) {
@@ -32,15 +34,22 @@ export async function processVerifiedPaystackPayment(reference) {
   if (!secret) throw new Error("Paystack is not configured");
   const db = supabaseAdmin();
   const { data: payment, error } = await db.from("audit_payments")
-    .select("id,audit_id,amount,currency,status,pdf_path")
+    .select("id,audit_id,amount,currency,status,pdf_path,download_token,token_expires_at")
     .eq("reference", reference).maybeSingle();
   if (error) throw error;
   if (!payment) return { status: "not_found" };
-  if (payment.status === "paid" && payment.pdf_path) return { status: "paid", pdfPath: payment.pdf_path, duplicate: true };
+  if (payment.status === "paid" && payment.pdf_path) {
+    if (!payment.download_token || !payment.token_expires_at) {
+      const downloadToken = payment.download_token || randomBytes(32).toString("hex");
+      const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+      const { error: tokenError } = await db.from("audit_payments").update({ download_token: downloadToken, token_expires_at: expiresAt }).eq("id", payment.id);
+      if (tokenError) throw tokenError;
+    }
+    return { status: "paid", pdfPath: payment.pdf_path, duplicate: true };
+  }
 
   const verifyResponse = await fetch("https://api.paystack.co/transaction/verify/" + encodeURIComponent(reference), {
-    headers: { Authorization: "Bearer " + secret },
-    signal: AbortSignal.timeout(15000)
+    headers: { Authorization: "Bearer " + secret }, signal: AbortSignal.timeout(15000)
   });
   const verified = await verifyResponse.json().catch(() => ({}));
   if (!verifyResponse.ok || !verified.status) throw new Error("Paystack transaction verification request failed");
@@ -60,12 +69,12 @@ export async function processVerifiedPaystackPayment(reference) {
     .upload(path, pdf, { contentType: "application/pdf", upsert: false, cacheControl: "3600" });
   if (uploadError && !String(uploadError.message).toLowerCase().includes("already exists")) throw uploadError;
 
+  const downloadToken = payment.download_token || randomBytes(32).toString("hex");
+  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
   const { error: updateError } = await db.from("audit_payments").update({
-    status: "paid",
-    paystack_transaction_id: String(transaction.id),
-    paid_at: new Date().toISOString(),
-    pdf_path: path,
-    webhook_processed_at: new Date().toISOString()
+    status: "paid", paystack_transaction_id: String(transaction.id),
+    paid_at: new Date().toISOString(), pdf_path: path, webhook_processed_at: new Date().toISOString(),
+    download_token: downloadToken, token_expires_at: expiresAt
   }).eq("id", payment.id);
   if (updateError) throw updateError;
   return { status: "paid", pdfPath: path };
