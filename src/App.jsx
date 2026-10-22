@@ -115,12 +115,13 @@ function App() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const reference = params.get("reference") || params.get("trxref");
-    if (params.get("payment") !== "return" || !reference) return;
+    const token = params.get("token");
+    if (params.get("payment") !== "return" || !reference || !token) return;
     let cancelled = false, attempts = 0;
     const check = async () => {
       attempts += 1;
       try {
-        const response = await fetch("/api/paystack/status?reference=" + encodeURIComponent(reference));
+        const response = await fetch("/api/paystack/status?reference=" + encodeURIComponent(reference) + "&token=" + encodeURIComponent(token));
         const result = await response.json();
         if (result.status === "paid" && result.downloadUrl) {
           if (!cancelled) { setDownloadUrl(result.downloadUrl); setPaymentMessage("Payment confirmed. Your secure download link expires in one hour."); }
