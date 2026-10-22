@@ -42,3 +42,6 @@
 .paid-report-box button:disabled{opacity:.6;cursor:not-allowed}.theme-dark .paid-report-box{background:#101a2b;border-color:#27364d}
 .theme-dark .paid-report-box h4{color:#e6edf8}.theme-dark .report-email-label{color:#c0cce0}
 .theme-dark .report-email-label input{background:#111c2f;border-color:#34445e;color:#e6edf8}
+.download-recovery-form{display:flex;flex-direction:column;align-items:flex-start;gap:10px;width:100%;padding-top:8px}
+.download-recovery-form small{max-width:440px;color:#64748b;font-size:12px;line-height:1.6}
+.theme-dark .download-recovery-form small{color:#aab8cd}
