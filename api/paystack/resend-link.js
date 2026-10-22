@@ -35,7 +35,7 @@ export function createResendLinkHandler({
     const validReference = typeof reference === "string" &&
       /^sitelift_[0-9a-f-]{36}_[a-f0-9]{32}$/i.test(reference);
     const validEmail = typeof email === "string" && email.length <= 254 &&
-      /^[^\s@]+@[^\s@]+\\.[^\s@]+$/.test(email.trim());
+      /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
 
     const mailKey = process.env.RESEND_API_KEY;
     const mailFrom = process.env.RESEND_FROM_EMAIL;
