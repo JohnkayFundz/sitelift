@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
-import { validSignature } from "../api/paystack/webhook.js";
-import { createAuditPdf } from "../api/_lib/server.js";
+import { createPaystackWebhookHandler, validSignature } from "../api/paystack/webhook.js";
+import { createAuditPdf, processVerifiedPaystackPayment } from "../api/_lib/server.js";
 test("Paystack webhook signature validates the exact raw body", () => {
   const raw = Buffer.from(JSON.stringify({ event: "charge.success", data: { reference: "test-reference" } }));
   const secret = "test-secret-for-unit-tests";
@@ -38,4 +38,99 @@ test("expired tokens have a distinct reason and the recovery endpoint only email
   assert.match(recovery, /to: \[payment\.customer_email\]/);
   assert.match(recovery, /const GENERIC_MESSAGE = "If the reference and email match a paid record/);
   assert.doesNotMatch(recovery, /downloadUrl:\s*link\.toString\(\)/);
+});
+
+test("duplicate charge.success webhook leaves an existing paid record immutable", async () => {
+  const reference = "sitelift_decb676a-e5fb-40eb-9ea6-e983b2a4840b_c2ad7387235540f0b4eacd86bcfb87b9";
+  const secret = "unit-test-paystack-secret";
+  const originalSecret = process.env.PAYSTACK_SECRET_KEY;
+  process.env.PAYSTACK_SECRET_KEY = secret;
+
+  const payment = {
+    id: "payment-test-id",
+    audit_id: "audit-test-id",
+    reference,
+    amount: 250000,
+    currency: "NGN",
+    status: "paid",
+    pdf_path: "/reports/test.pdf",
+    paid_at: "2026-10-20T12:34:56.000Z",
+    webhook_processed_at: "2026-10-20T12:34:57.000Z",
+    download_token: "token_abc123",
+    token_expires_at: "2099-01-01T00:00:00.000Z",
+    processing_started_at: null
+  };
+  const originalPayment = structuredClone(payment);
+  let updateCalls = 0;
+  let pdfCalls = 0;
+  let uploadCalls = 0;
+  const query = {
+    select() { return this; },
+    eq(column, value) {
+      if (column === "reference") assert.equal(value, reference);
+      return this;
+    },
+    maybeSingle: async () => ({ data: structuredClone(payment), error: null }),
+    update() {
+      updateCalls += 1;
+      return this;
+    }
+  };
+  const db = {
+    from(table) {
+      assert.equal(table, "audit_payments");
+      return query;
+    },
+    storage: {
+      from() {
+        return {
+          upload() {
+            uploadCalls += 1;
+            throw new Error("Duplicate processing must not upload a PDF");
+          }
+        };
+      }
+    }
+  };
+
+  try {
+    const handler = createPaystackWebhookHandler({
+      processPayment: (incomingReference) => processVerifiedPaystackPayment(incomingReference, {
+        supabaseAdmin: () => db,
+        createAuditPdf: () => {
+          pdfCalls += 1;
+          throw new Error("Duplicate processing must not generate a PDF");
+        }
+      })
+    });
+    const raw = Buffer.from(JSON.stringify({
+      event: "charge.success",
+      data: { reference, status: "success", amount: 250000, currency: "NGN" }
+    }));
+    const signature = createHmac("sha512", secret).update(raw).digest("hex");
+    const response = {
+      statusCode: null,
+      headers: {},
+      body: null,
+      status(code) { this.statusCode = code; return this; },
+      setHeader(name, value) { this.headers[name] = value; },
+      json(body) { this.body = body; return this; }
+    };
+
+    await handler({
+      method: "POST",
+      headers: { "x-paystack-signature": signature },
+      body: raw
+    }, response);
+
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(response.body, { received: true, duplicate: true });
+    assert.equal(updateCalls, 0, "Supabase update must never be called for a complete paid record");
+    assert.equal(pdfCalls, 0, "PDF generation must never run for a complete paid record");
+    assert.equal(uploadCalls, 0, "PDF storage upload must never run for a complete paid record");
+    assert.deepEqual(payment, originalPayment, "critical payment fields remain unchanged");
+  } finally {
+    if (originalSecret === undefined) delete process.env.PAYSTACK_SECRET_KEY;
+    else process.env.PAYSTACK_SECRET_KEY = originalSecret;
+  }
 });
