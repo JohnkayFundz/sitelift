@@ -34,48 +34,99 @@ export async function processVerifiedPaystackPayment(reference) {
   if (!secret) throw new Error("Paystack is not configured");
   const db = supabaseAdmin();
   const { data: payment, error } = await db.from("audit_payments")
-    .select("id,audit_id,amount,currency,status,pdf_path,download_token,token_expires_at")
+    .select("id,audit_id,amount,currency,status,pdf_path,download_token,token_expires_at,processing_started_at")
     .eq("reference", reference).maybeSingle();
   if (error) throw error;
   if (!payment) return { status: "not_found" };
+
+  // A completed payment is immutable on duplicate deliveries: preserve both the
+  // existing PDF and the original download-token expiry.
   if (payment.status === "paid" && payment.pdf_path) {
     if (!payment.download_token || !payment.token_expires_at) {
       const downloadToken = payment.download_token || randomBytes(32).toString("hex");
       const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-      const { error: tokenError } = await db.from("audit_payments").update({ download_token: downloadToken, token_expires_at: expiresAt }).eq("id", payment.id);
+      const { error: tokenError } = await db.from("audit_payments")
+        .update({ download_token: downloadToken, token_expires_at: expiresAt })
+        .eq("id", payment.id).eq("status", "paid")
+        .or("download_token.is.null,token_expires_at.is.null");
       if (tokenError) throw tokenError;
     }
     return { status: "paid", pdfPath: payment.pdf_path, duplicate: true };
   }
 
-  const verifyResponse = await fetch("https://api.paystack.co/transaction/verify/" + encodeURIComponent(reference), {
-    headers: { Authorization: "Bearer " + secret }, signal: AbortSignal.timeout(15000)
-  });
-  const verified = await verifyResponse.json().catch(() => ({}));
-  if (!verifyResponse.ok || !verified.status) throw new Error("Paystack transaction verification request failed");
-  const transaction = verified.data;
-  if (transaction?.status !== "success") return { status: payment.status || "pending" };
-  if (transaction.reference !== reference || transaction.currency !== "NGN" || payment.currency !== "NGN" || Number(transaction.amount) !== Number(payment.amount)) {
-    throw new Error("Verified Paystack transaction does not match the pending payment");
+  // Claim the row atomically. A pending row can only be claimed once. A crashed
+  // worker's processing claim may be reclaimed after three minutes.
+  const now = new Date();
+  const nowIso = now.toISOString();
+  const staleBefore = new Date(now.getTime() - 3 * 60 * 1000).toISOString();
+  const { data: claimed, error: claimError } = await db.from("audit_payments")
+    .update({ status: "processing", processing_started_at: nowIso })
+    .eq("id", payment.id)
+    .or("status.eq.pending,and(status.eq.processing,processing_started_at.lt." + staleBefore + ")")
+    .select("id,audit_id,amount,currency,download_token")
+    .maybeSingle();
+  if (claimError) throw claimError;
+  if (!claimed) {
+    const { data: current, error: currentError } = await db.from("audit_payments")
+      .select("status,pdf_path,download_token,token_expires_at,processing_started_at")
+      .eq("id", payment.id).maybeSingle();
+    if (currentError) throw currentError;
+    if (current?.status === "paid" && current.pdf_path) {
+      return { status: "paid", pdfPath: current.pdf_path, duplicate: true };
+    }
+    if (current?.status === "processing") return { status: "processing", duplicate: true };
+    return { status: current?.status || "pending", duplicate: true };
   }
 
-  const { data: audit, error: auditError } = await db.from("audits")
-    .select("id,target_url,final_url,strategy,report,created_at")
-    .eq("id", payment.audit_id).single();
-  if (auditError) throw auditError;
-  const pdf = createAuditPdf(audit);
-  const path = audit.id + "/" + reference + ".pdf";
-  const { error: uploadError } = await db.storage.from("audit-reports")
-    .upload(path, pdf, { contentType: "application/pdf", upsert: false, cacheControl: "3600" });
-  if (uploadError && !String(uploadError.message).toLowerCase().includes("already exists")) throw uploadError;
+  const resetClaim = async () => {
+    const { error: resetError } = await db.from("audit_payments")
+      .update({ status: "pending", processing_started_at: null })
+      .eq("id", payment.id).eq("status", "processing").eq("processing_started_at", nowIso);
+    if (resetError) console.error("Unable to release payment processing claim", resetError.message);
+  };
 
-  const downloadToken = payment.download_token || randomBytes(32).toString("hex");
-  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-  const { error: updateError } = await db.from("audit_payments").update({
-    status: "paid", paystack_transaction_id: String(transaction.id),
-    paid_at: new Date().toISOString(), pdf_path: path, webhook_processed_at: new Date().toISOString(),
-    download_token: downloadToken, token_expires_at: expiresAt
-  }).eq("id", payment.id);
-  if (updateError) throw updateError;
-  return { status: "paid", pdfPath: path };
+  try {
+    const verifyResponse = await fetch("https://api.paystack.co/transaction/verify/" + encodeURIComponent(reference), {
+      headers: { Authorization: "Bearer " + secret }, signal: AbortSignal.timeout(15000)
+    });
+    const verified = await verifyResponse.json().catch(() => ({}));
+    if (!verifyResponse.ok || !verified.status) throw new Error("Paystack transaction verification request failed");
+    const transaction = verified.data;
+    if (transaction?.status !== "success") {
+      await resetClaim();
+      return { status: "pending" };
+    }
+    if (transaction.reference !== reference || transaction.currency !== "NGN" || payment.currency !== "NGN" || Number(transaction.amount) !== Number(payment.amount)) {
+      throw new Error("Verified Paystack transaction does not match the pending payment");
+    }
+
+    const { data: audit, error: auditError } = await db.from("audits")
+      .select("id,target_url,final_url,strategy,report,created_at")
+      .eq("id", payment.audit_id).single();
+    if (auditError) throw auditError;
+    const pdf = createAuditPdf(audit);
+    const path = audit.id + "/" + reference + ".pdf";
+    const { error: uploadError } = await db.storage.from("audit-reports")
+      .upload(path, pdf, { contentType: "application/pdf", upsert: false, cacheControl: "3600" });
+    if (uploadError && !String(uploadError.message).toLowerCase().includes("already exists")) throw uploadError;
+
+    const downloadToken = claimed.download_token || randomBytes(32).toString("hex");
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+    const { data: completed, error: updateError } = await db.from("audit_payments").update({
+      status: "paid", paystack_transaction_id: String(transaction.id),
+      paid_at: new Date().toISOString(), pdf_path: path, webhook_processed_at: new Date().toISOString(),
+      download_token: downloadToken, token_expires_at: expiresAt, processing_started_at: null
+    }).eq("id", payment.id).eq("status", "processing").eq("processing_started_at", nowIso)
+      .select("id").maybeSingle();
+    if (updateError) throw updateError;
+    if (!completed) {
+      // A stale claim may have been reclaimed. Do not overwrite the new owner's
+      // payment timestamps; the next webhook/status check will observe its state.
+      return { status: "processing", duplicate: true };
+    }
+    return { status: "paid", pdfPath: path };
+  } catch (processingError) {
+    await resetClaim();
+    throw processingError;
+  }
 }
