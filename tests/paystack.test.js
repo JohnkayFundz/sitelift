@@ -34,7 +34,7 @@ test("expired tokens have a distinct reason and the recovery endpoint only email
   const app = await readFile(new URL("../src/App.jsx", import.meta.url), "utf8");
   assert.match(status, /reason: "expired_token"/);
   assert.match(app, /Your 24-hour download link has expired/);
-  assert.match(app, //api/paystack/resend-link/);
+  assert.ok(app.includes('"/api/paystack/resend-link"'));
   assert.match(recovery, /to: \[payment\.customer_email\]/);
   assert.match(recovery, /const GENERIC_MESSAGE = "If the reference and email match a paid record/);
   assert.doesNotMatch(recovery, /downloadUrl:\s*link\.toString\(\)/);
