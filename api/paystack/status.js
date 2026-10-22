@@ -15,8 +15,11 @@ export default async function handler(req, res) {
       .eq("download_token", token)
       .maybeSingle();
     if (authError) throw authError;
-    if (!authorized || !authorized.token_expires_at || new Date(authorized.token_expires_at).getTime() <= Date.now()) {
-      return json(res, 403, { error: "Download token is invalid or expired" });
+    if (!authorized) {
+      return json(res, 403, { error: "Download token is invalid", reason: "invalid_token" });
+    }
+    if (!authorized.token_expires_at || new Date(authorized.token_expires_at).getTime() <= Date.now()) {
+      return json(res, 403, { error: "Download token is invalid or expired", reason: "expired_token" });
     }
 
     if (authorized.status !== "paid") {
