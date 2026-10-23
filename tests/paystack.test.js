@@ -169,6 +169,10 @@ test("GET payment status is read-only and never invokes payment reconciliation o
     setHeader(name, value) { this.headers[name] = value; },
     json(body) { this.body = body; return this; }
   };
+  const { readFile } = await import("node:fs/promises");
+  const statusSource = await readFile(new URL("../api/paystack/status.js", import.meta.url), "utf8");
+  assert.doesNotMatch(statusSource, /processVerifiedPaystackPayment/);
+  assert.doesNotMatch(statusSource, /createSignedUrl/);
   const handler = createPaymentStatusHandler({ getSupabaseAdmin: () => db });
 
   await handler({ method: "GET", query: { reference, token } }, response);
