@@ -436,6 +436,7 @@ function paymentProcessingHarness({ uploadError: initialUploadError = null, paym
               const staleMatch = orFilter?.match(/processing_started_at\\.lt\\.(.+)$/);
               const orMatch = !orFilter ||
                 (orFilter.includes("status.eq.pending") && payment.status === "pending") ||
+                (orFilter.includes("status.eq.initialization_unknown") && payment.status === "initialization_unknown") ||
                 (orFilter.includes("status.eq.processing") && payment.status === "processing" &&
                   payment.processing_started_at && staleMatch &&
                   Date.parse(payment.processing_started_at) < Date.parse(staleMatch[1]));
