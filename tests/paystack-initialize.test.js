@@ -122,7 +122,7 @@ test("checkout initialization uses a shared five-attempt sliding window and fail
 test("payment migration enforces a single pending or processing checkout per audit", async () => {
   const migration = await readFile(new URL("../supabase/migrations/202610170001_sitelift_audits_payments.sql", import.meta.url), "utf8");
   assert.match(migration, /create unique index if not exists audit_payments_one_active_checkout_per_audit_idx/);
-  assert.match(migration, /on public\.audit_payments \(audit_id\) where status in \('pending','processing'\)/);
+  assert.match(migration, /on public\.audit_payments \(audit_id\) where status in \('pending','processing','initialization_unknown'\)/);
 });
 
 test("Vercel config defines exactly one CSP policy and permits Paystack checkout form submission", async () => {
