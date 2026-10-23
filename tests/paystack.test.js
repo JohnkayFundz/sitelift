@@ -328,7 +328,7 @@ test("explicit payment verification refuses an invalid token before reconciliati
 });
 
 
-function paymentProcessingHarness({ uploadError = null, transaction = { status: "success", reference: "sitelift_decb676a-e5fb-40eb-9ea6-e983b2a4840b_c2ad7387235540f0b4eacd86bcfb87b9", currency: "NGN", amount: 250000, id: 123 }, paymentOverrides = {} } = {}) {
+function paymentProcessingHarness({ uploadError = null, paymentOverrides = {} } = {}) {
   const payment = {
     id: "payment-1", audit_id: "audit-1", amount: 250000, currency: "NGN",
     status: "pending", pdf_path: null, download_token: "a".repeat(64),
