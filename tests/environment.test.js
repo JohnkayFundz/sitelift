@@ -42,7 +42,7 @@ test("PageSpeed persistence checks the Preview database guard before creating a 
   const factory = source.match(/function getSupabase\(\) \{([\s\S]*?)\n\}/)?.[1];
 
   assert.ok(factory, "expected a getSupabase factory in api/pagespeed.js");
-  assert.match(source, /import \{ assertSupabaseEnvironmentSafe \} from "\.\/\_lib\/environment\.js";/);
+  assert.match(source, /import \{ assertSupabaseEnvironmentSafe \} from "\.\/_lib\/environment\.js";/);
   const guardIndex = factory.indexOf("assertSupabaseEnvironmentSafe({ supabaseUrl: url })");
   const clientIndex = factory.indexOf("createClient(url, key,");
 
