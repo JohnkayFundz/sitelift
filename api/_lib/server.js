@@ -66,7 +66,7 @@ export async function processVerifiedPaystackPayment(reference, dependencies = {
   const { data: claimed, error: claimError } = await db.from("audit_payments")
     .update({ status: "processing", processing_started_at: nowIso })
     .eq("id", payment.id)
-    .or("status.eq.pending,and(status.eq.processing,processing_started_at.lt." + staleBefore + ")")
+    .or("status.eq.pending,status.eq.initialization_unknown,and(status.eq.processing,processing_started_at.lt." + staleBefore + ")")
     .select("id,audit_id,amount,currency,download_token")
     .maybeSingle();
   if (claimError) throw claimError;
@@ -82,9 +82,10 @@ export async function processVerifiedPaystackPayment(reference, dependencies = {
     return { status: current?.status || "pending", duplicate: true };
   }
 
+  const resetStatus = payment.status === "initialization_unknown" ? "initialization_unknown" : "pending";
   const resetClaim = async () => {
     const { error: resetError } = await db.from("audit_payments")
-      .update({ status: "pending", processing_started_at: null })
+      .update({ status: resetStatus, processing_started_at: null })
       .eq("id", payment.id).eq("status", "processing").eq("processing_started_at", nowIso);
     if (resetError) console.error("Unable to release payment processing claim", resetError.message);
   };
