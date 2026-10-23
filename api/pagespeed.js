@@ -1,6 +1,7 @@
 import { Ratelimit } from "@upstash/ratelimit";
 import { Redis } from "@upstash/redis";
 import { createClient } from "@supabase/supabase-js";
+import { assertSupabaseEnvironmentSafe } from "./_lib/environment.js";
 
 let limiter;
 function getLimiter() {
@@ -13,6 +14,7 @@ function getSupabase() {
   const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) throw new Error("Supabase server configuration is missing");
+  assertSupabaseEnvironmentSafe({ supabaseUrl: url });
   return createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
 }
 function clientIp(req) {
