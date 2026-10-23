@@ -326,3 +326,126 @@ test("explicit payment verification refuses an invalid token before reconciliati
   assert.equal(dbCalls, 0);
   assert.equal(processCalls, 0);
 });
+
+
+function paymentProcessingHarness({ uploadError = null, transaction = { status: "success", reference: "sitelift_decb676a-e5fb-40eb-9ea6-e983b2a4840b_c2ad7387235540f0b4eacd86bcfb87b9", currency: "NGN", amount: 250000, id: 123 }, paymentOverrides = {} } = {}) {
+  const payment = {
+    id: "payment-1", audit_id: "audit-1", amount: 250000, currency: "NGN",
+    status: "pending", pdf_path: null, download_token: "a".repeat(64),
+    token_expires_at: "2099-01-01T00:00:00.000Z", processing_started_at: null,
+    reference: "sitelift_decb676a-e5fb-40eb-9ea6-e983b2a4840b_c2ad7387235540f0b4eacd86bcfb87b9",
+    ...paymentOverrides
+  };
+  const updates = [];
+  const db = {
+    from(table) {
+      if (table === "audit_payments") return {
+        select() {
+          const filters = [];
+          const q = {
+            eq(k, v) { filters.push([k, v]); return this; },
+            maybeSingle: async () => ({ data: filters.some(([k, v]) => payment[k] !== v) ? null : structuredClone(payment), error: null })
+          };
+          return q;
+        },
+        update(values) {
+          const filters = [];
+          let orFilter = null;
+          let wantsRow = false;
+          const q = {
+            eq(k, v) { filters.push([k, v]); return this; },
+            or(v) { orFilter = v; return this; },
+            select() { wantsRow = true; return this; },
+            async maybeSingle() {
+              const basicMatch = filters.every(([k, v]) => payment[k] === v);
+              const orMatch = !orFilter ||
+                (orFilter.includes("status.eq.pending") && payment.status === "pending") ||
+                (orFilter.includes("status.eq.processing") && payment.status === "processing" &&
+                  payment.processing_started_at && orFilter.includes("processing_started_at.lt."));
+              if (!basicMatch || !orMatch) return { data: null, error: null };
+              Object.assign(payment, structuredClone(values));
+              updates.push(structuredClone(values));
+              return { data: wantsRow ? { id: payment.id } : null, error: null };
+            },
+            then(resolve, reject) {
+              const basicMatch = filters.every(([k, v]) => payment[k] === v);
+              if (basicMatch) {
+                Object.assign(payment, structuredClone(values));
+                updates.push(structuredClone(values));
+              }
+              return Promise.resolve({ error: null }).then(resolve, reject);
+            }
+          };
+          return q;
+        }
+      };
+      if (table === "audits") return {
+        select() { return this; },
+        eq() { return this; },
+        single: async () => ({ data: { id: "audit-1", target_url: "https://example.com", final_url: "https://example.com/", strategy: "mobile", created_at: "2026-10-20T00:00:00.000Z", report: { scores: [], metrics: [], opportunities: [] } }, error: null })
+      };
+      throw new Error("Unexpected table " + table);
+    },
+    storage: { from(bucket) {
+      assert.equal(bucket, "audit-reports");
+      return { upload: async () => ({ error: uploadError }) };
+    } }
+  };
+  return { db, payment, updates };
+}
+
+test("payment processing releases its atomic claim when PDF storage fails", async () => {
+  const originalSecret = process.env.PAYSTACK_SECRET_KEY;
+  const originalFetch = globalThis.fetch;
+  process.env.PAYSTACK_SECRET_KEY = "unit-test-paystack-secret";
+  globalThis.fetch = async () => ({ ok: true, json: async () => ({ status: true, data: {
+    status: "success",
+    reference: "sitelift_decb676a-e5fb-40eb-9ea6-e983b2a4840b_c2ad7387235540f0b4eacd86bcfb87b9",
+    currency: "NGN", amount: 250000, id: 123
+  } }) });
+  const h = paymentProcessingHarness({ uploadError: { message: "storage unavailable" } });
+  const oldError = console.error;
+  console.error = () => {};
+  try {
+    await assert.rejects(
+      processVerifiedPaystackPayment(h.payment.reference, { supabaseAdmin: () => h.db, createAuditPdf: () => Buffer.from("%PDF-test") }),
+      /storage unavailable/
+    );
+    assert.equal(h.payment.status, "pending", "failed PDF upload should return the payment to pending");
+    assert.equal(h.payment.processing_started_at, null, "failed processing should release its claim");
+    assert.equal(h.updates.length, 2, "one claim and one conditional claim reset should occur");
+  } finally {
+    console.error = oldError;
+    globalThis.fetch = originalFetch;
+    if (originalSecret === undefined) delete process.env.PAYSTACK_SECRET_KEY;
+    else process.env.PAYSTACK_SECRET_KEY = originalSecret;
+  }
+});
+
+test("unconfirmed Paystack transactions release the processing claim without generating or uploading a PDF", async () => {
+  const originalSecret = process.env.PAYSTACK_SECRET_KEY;
+  const originalFetch = globalThis.fetch;
+  process.env.PAYSTACK_SECRET_KEY = "unit-test-paystack-secret";
+  globalThis.fetch = async () => ({ ok: true, json: async () => ({ status: true, data: {
+    status: "pending",
+    reference: "sitelift_decb676a-e5fb-40eb-9ea6-e983b2a4840b_c2ad7387235540f0b4eacd86bcfb87b9",
+    currency: "NGN", amount: 250000, id: 123
+  } }) });
+  const h = paymentProcessingHarness();
+  let pdfCalls = 0;
+  try {
+    const result = await processVerifiedPaystackPayment(h.payment.reference, {
+      supabaseAdmin: () => h.db,
+      createAuditPdf: () => { pdfCalls += 1; return Buffer.from("%PDF-test"); }
+    });
+    assert.deepEqual(result, { status: "pending" });
+    assert.equal(h.payment.status, "pending");
+    assert.equal(h.payment.processing_started_at, null);
+    assert.equal(h.updates.length, 2, "claim and reset are both recorded");
+    assert.equal(pdfCalls, 0, "an unconfirmed transaction must not generate a report");
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalSecret === undefined) delete process.env.PAYSTACK_SECRET_KEY;
+    else process.env.PAYSTACK_SECRET_KEY = originalSecret;
+  }
+});
