@@ -55,11 +55,69 @@ test("checkout initialization rate limit rejects excess attempts before database
   }
 });
 
+test("checkout initialization rejects an existing active payment before calling Paystack", async () => {
+  const previousSecret = process.env.PAYSTACK_SECRET_KEY;
+  process.env.PAYSTACK_SECRET_KEY = "unit-test-paystack-secret";
+  let providerCalls = 0;
+  const activePaymentQuery = {
+    select() { return this; },
+    eq() { return this; },
+    in() { return this; },
+    limit() { return this; },
+    async maybeSingle() { return { data: { id: "existing-payment" }, error: null }; }
+  };
+  const auditQuery = {
+    select() { return this; },
+    eq() { return this; },
+    async maybeSingle() { return { data: { id: "decb676a-e5fb-40eb-9ea6-e983b2a4840b" }, error: null }; }
+  };
+  const db = {
+    from(table) {
+      assert.equal(table, "audits");
+      return {
+        select() { return this; },
+        eq() { return this; },
+        async maybeSingle() { return { data: { id: "decb676a-e5fb-40eb-9ea6-e983b2a4840b" }, error: null }; }
+      };
+    }
+  };
+  const originalFrom = db.from;
+  db.from = (table) => {
+    if (table === "audits") return originalFrom(table);
+    assert.equal(table, "audit_payments");
+    return activePaymentQuery;
+  };
+  const handler = createPaystackInitializeHandler({
+    createRateLimiter: () => ({ limit: async () => ({ success: true }) }),
+    getSupabaseAdmin: () => db,
+    fetchImpl: async () => { providerCalls += 1; throw new Error("Must not call Paystack"); }
+  });
+  const res = response();
+  try {
+    await handler({
+      method: "POST",
+      headers: { "x-real-ip": "203.0.113.10" },
+      body: { auditId: "decb676a-e5fb-40eb-9ea6-e983b2a4840b", email: "customer@example.com" }
+    }, res);
+    assert.equal(res.statusCode, 409);
+    assert.equal(providerCalls, 0);
+  } finally {
+    if (previousSecret === undefined) delete process.env.PAYSTACK_SECRET_KEY;
+    else process.env.PAYSTACK_SECRET_KEY = previousSecret;
+  }
+});
+
 test("checkout initialization uses a shared five-attempt sliding window and fails closed without configuration", async () => {
   const source = await readFile(new URL("../api/paystack/initialize.js", import.meta.url), "utf8");
   assert.match(source, /Ratelimit\.slidingWindow\(5, "10 m"\)/);
   assert.match(source, /prefix: "sitelift:paystack-initialize"/);
   assert.match(source, /Payment initialization rate limiter is not configured/);
+});
+
+test("payment migration enforces a single pending or processing checkout per audit", async () => {
+  const migration = await readFile(new URL("../supabase/migrations/202610170001_sitelift_audits_payments.sql", import.meta.url), "utf8");
+  assert.match(migration, /create unique index if not exists audit_payments_one_active_checkout_per_audit_idx/);
+  assert.match(migration, /on public\.audit_payments \(audit_id\) where status in \('pending','processing'\)/);
 });
 
 test("Vercel config defines exactly one CSP policy and permits Paystack checkout form submission", async () => {
