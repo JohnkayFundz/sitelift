@@ -23,7 +23,7 @@ test("webhook processing claims a payment atomically and acknowledges in-progres
   const { readFile } = await import("node:fs/promises");
   const server = await readFile(new URL("../api/_lib/server.js", import.meta.url), "utf8");
   const webhook = await readFile(new URL("../api/paystack/webhook.js", import.meta.url), "utf8");
-  assert.match(server, /status\.eq\.pending,and\(status\.eq\.processing,processing_started_at\.lt\./);
+  assert.match(server, /status\.eq\.pending,status\.eq\.initialization_unknown,and\(status\.eq\.processing,processing_started_at\.lt\./);
   assert.match(server, /\.eq\("status", "processing"\)\.eq\("processing_started_at", nowIso\)/);
   assert.match(webhook, /result\.status === "processing"[\s\S]*?json\(res, 200,[\s\S]*?duplicate: true/);
 });
@@ -493,6 +493,33 @@ test("payment processing releases its atomic claim when PDF storage fails", asyn
     assert.equal(h.updates.length, 2, "one claim and one conditional claim reset should occur");
   } finally {
     console.error = oldError;
+    globalThis.fetch = originalFetch;
+    if (originalSecret === undefined) delete process.env.PAYSTACK_SECRET_KEY;
+    else process.env.PAYSTACK_SECRET_KEY = originalSecret;
+  }
+});
+
+test("verified successful payments can be reconciled from an uncertain initialization state", async () => {
+  const originalSecret = process.env.PAYSTACK_SECRET_KEY;
+  const originalFetch = globalThis.fetch;
+  process.env.PAYSTACK_SECRET_KEY = "unit-test-paystack-secret";
+  globalThis.fetch = async () => ({ ok: true, json: async () => ({ status: true, data: {
+    status: "success",
+    reference: "sitelift_decb676a-e5fb-40eb-9ea6-e983b2a4840b_c2ad7387235540f0b4eacd86bcfb87b9",
+    currency: "NGN", amount: 250000, id: 123
+  } }) });
+  const h = paymentProcessingHarness({ paymentOverrides: { status: "initialization_unknown" } });
+  try {
+    const result = await processVerifiedPaystackPayment(h.payment.reference, {
+      supabaseAdmin: () => h.db,
+      createAuditPdf: () => Buffer.from("%PDF-test")
+    });
+    assert.equal(result.status, "paid");
+    assert.equal(h.payment.status, "paid");
+    assert.equal(h.payment.processing_started_at, null);
+    assert.equal(h.updates[0].status, "processing");
+    assert.equal(h.updates[1].status, "paid");
+  } finally {
     globalThis.fetch = originalFetch;
     if (originalSecret === undefined) delete process.env.PAYSTACK_SECRET_KEY;
     else process.env.PAYSTACK_SECRET_KEY = originalSecret;
