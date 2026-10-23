@@ -124,28 +124,65 @@ function App() {
     const token = params.get("token");
     if (params.get("payment") !== "return" || !reference || !token) return;
     let cancelled = false, attempts = 0;
-    const check = async () => {
+
+    const showExpiredToken = () => {
+      if (cancelled) return;
+      setRecoveryVisible(true);
+      setRecoveryReference(reference);
+      setPaymentMessage("Your 24-hour download link has expired. Enter the email address used at checkout and your payment reference to receive a fresh secure link.");
+    };
+
+    const verifyForDownload = async () => {
+      const response = await fetch("/api/paystack/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reference, token })
+      });
+      const result = await response.json().catch(() => ({}));
+      if (response.status === 403 && result.reason === "expired_token") {
+        showExpiredToken();
+        return true;
+      }
+      if (result.status === "paid" && result.downloadUrl) {
+        if (!cancelled) {
+          setDownloadUrl(result.downloadUrl);
+          setPaymentMessage("Payment confirmed. Your secure download link expires in one hour.");
+        }
+        return true;
+      }
+      return false;
+    };
+
+    const checkReadOnlyStatus = async () => {
       attempts += 1;
       try {
         const response = await fetch("/api/paystack/status?reference=" + encodeURIComponent(reference) + "&token=" + encodeURIComponent(token));
-        const result = await response.json();
+        const result = await response.json().catch(() => ({}));
         if (response.status === 403 && result.reason === "expired_token") {
-          if (!cancelled) {
-            setRecoveryVisible(true);
-            setRecoveryReference(reference);
-            setPaymentMessage("Your 24-hour download link has expired. Enter the email address used at checkout and your payment reference to receive a fresh secure link.");
-          }
+          showExpiredToken();
           return;
         }
-        if (result.status === "paid" && result.downloadUrl) {
-          if (!cancelled) { setDownloadUrl(result.downloadUrl); setPaymentMessage("Payment confirmed. Your secure download link expires in one hour."); }
-          return;
+        if (result.status === "paid" && result.downloadReady) {
+          const complete = await verifyForDownload();
+          if (complete || cancelled) return;
         }
-        if (!cancelled && attempts < 12) window.setTimeout(check, 2500);
+        if (!cancelled && attempts < 12) window.setTimeout(checkReadOnlyStatus, 2500);
         else if (!cancelled) setPaymentMessage("Payment is still processing. Refresh this page in a moment to check again.");
-      } catch { if (!cancelled && attempts < 12) window.setTimeout(check, 2500); }
+      } catch {
+        if (!cancelled && attempts < 12) window.setTimeout(checkReadOnlyStatus, 2500);
+        else if (!cancelled) setPaymentMessage("Unable to check payment status right now. Please refresh in a moment.");
+      }
     };
-    check();
+
+    (async () => {
+      try {
+        const complete = await verifyForDownload();
+        if (!complete && !cancelled) checkReadOnlyStatus();
+      } catch {
+        if (!cancelled) checkReadOnlyStatus();
+      }
+    })();
+
     return () => { cancelled = true; };
   }, []);
   const requestFreshDownloadLink = async () => {
