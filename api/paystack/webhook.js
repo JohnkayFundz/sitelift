@@ -1,11 +1,25 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { json, processVerifiedPaystackPayment } from "../_lib/server.js";
 export const config = { api: { bodyParser: false }, maxDuration: 60 };
+const MAX_WEBHOOK_BODY_BYTES = 1024 * 1024;
 async function rawBody(req) {
-  if (Buffer.isBuffer(req.body)) return req.body;
-  if (typeof req.body === "string") return Buffer.from(req.body);
-  const chunks = []; let size = 0;
-  for await (const chunk of req) { size += chunk.length; if (size > 1024 * 1024) throw new Error("Webhook body too large"); chunks.push(Buffer.from(chunk)); }
+  if (Buffer.isBuffer(req.body)) {
+    if (req.body.length > MAX_WEBHOOK_BODY_BYTES) throw new Error("Webhook body too large");
+    return req.body;
+  }
+  if (typeof req.body === "string") {
+    const body = Buffer.from(req.body);
+    if (body.length > MAX_WEBHOOK_BODY_BYTES) throw new Error("Webhook body too large");
+    return body;
+  }
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of req) {
+    const buffer = Buffer.from(chunk);
+    size += buffer.length;
+    if (size > MAX_WEBHOOK_BODY_BYTES) throw new Error("Webhook body too large");
+    chunks.push(buffer);
+  }
   return Buffer.concat(chunks);
 }
 export function validSignature(raw, signature, secret) {
