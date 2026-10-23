@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { assertSupabaseEnvironmentSafe } from "../api/_lib/environment.js";
 
 const productionUrl = "https://jnuqpijilwmhefbtjimx.supabase.co";
@@ -36,6 +37,19 @@ test("Preview fails closed when its Supabase URL is malformed", () => {
   );
 });
 
+test("PageSpeed persistence checks the Preview database guard before creating a Supabase client", () => {
+  const source = readFileSync(new URL("../api/pagespeed.js", import.meta.url), "utf8");
+  const factory = source.match(/function getSupabase\(\) \{([\s\S]*?)\n\}/)?.[1];
+
+  assert.ok(factory, "expected a getSupabase factory in api/pagespeed.js");
+  assert.match(source, /import \{ assertSupabaseEnvironmentSafe \} from "\.\/\_lib\/environment\.js";/);
+  const guardIndex = factory.indexOf("assertSupabaseEnvironmentSafe({ supabaseUrl: url })");
+  const clientIndex = factory.indexOf("createClient(url, key,");
+
+  assert.notEqual(guardIndex, -1, "PageSpeed must call the Preview database guard");
+  assert.notEqual(clientIndex, -1, "PageSpeed must create its Supabase client");
+  assert.ok(guardIndex < clientIndex, "the Preview database guard must run before client creation");
+});
 
 test("server Supabase client refuses the production project in Vercel Preview before connecting", async () => {
   const { supabaseAdmin } = await import("../api/_lib/server.js");
