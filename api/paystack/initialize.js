@@ -62,7 +62,7 @@ export function createPaystackInitializeHandler({
       // index is the concurrency-safe guard; this lookup gives ordinary retries a
       // clear response without calling Paystack again.
       const { data: activePayment, error: activePaymentError } = await db.from("audit_payments")
-        .select("id,access_code,reference").eq("audit_id", auditId).in("status", ["pending", "processing"])
+        .select("id,access_code,reference,status").eq("audit_id", auditId).in("status", ["pending", "processing", "initialization_unknown"])
         .limit(1).maybeSingle();
       if (activePaymentError) throw activePaymentError;
       if (activePayment?.access_code && activePayment?.reference) {
@@ -73,7 +73,10 @@ export function createPaystackInitializeHandler({
         });
       }
       if (activePayment) {
-        return json(res, 409, { error: "A checkout is already being initialized for this report. Please wait before trying again." });
+        const message = activePayment.status === "initialization_unknown"
+          ? "Checkout initialization needs reconciliation. Please contact support before retrying to avoid duplicate payment attempts."
+          : "A checkout is already being initialized for this report. Please wait before trying again.";
+        return json(res, 409, { error: message });
       }
 
       const reference = "sitelift_" + auditId + "_" + randomBytes(16).toString("hex");
@@ -92,7 +95,9 @@ export function createPaystackInitializeHandler({
       const callback = new URL("/audit/" + auditId, origin);
       callback.searchParams.set("payment", "return");
       callback.searchParams.set("token", downloadToken);
-      const upstream = await fetchImpl("https://api.paystack.co/transaction/initialize", {
+      let upstream;
+      try {
+        upstream = await fetchImpl("https://api.paystack.co/transaction/initialize", {
         method: "POST",
         headers: { Authorization: "Bearer " + secret, "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -100,18 +105,43 @@ export function createPaystackInitializeHandler({
           callback_url: callback.toString(),
           metadata: { audit_id: auditId, payment_id: payment.id, product: "unbranded_pdf_audit_report" }
         }),
-        signal: AbortSignal.timeout(15000)
-      });
-      const result = await upstream.json().catch(() => ({}));
-      if (!upstream.ok || !result.status || !result.data?.authorization_url) {
-        await db.from("audit_payments").update({
-          status: "initialization_failed", download_token: null, token_expires_at: null
-        }).eq("id", payment.id);
-        return json(res, 502, { error: "Payment provider could not initialize checkout" });
+          signal: AbortSignal.timeout(15000)
+        });
+      } catch (networkError) {
+        // The provider may have created the checkout before the connection timed out.
+        // Keep this row active and require reconciliation; never blindly create another.
+        const { error: unknownError } = await db.from("audit_payments")
+          .update({ status: "initialization_unknown" }).eq("id", payment.id).eq("status", "pending");
+        if (unknownError) console.error("Unable to mark checkout outcome unknown", unknownError.message);
+        console.error("Paystack initialization outcome is unknown", networkError?.message);
+        return json(res, 503, { error: "Checkout status is uncertain. Please contact support before retrying." });
+      }
+      const result = await upstream.json().catch(() => null);
+      if (!upstream.ok || !result?.status || !result.data?.authorization_url) {
+        const uncertain = upstream.status >= 500 || !result ||
+          /duplicate.*reference|reference.*already exists/i.test(String(result?.message || ""));
+        const { error: updateError } = await db.from("audit_payments").update(
+          uncertain
+            ? { status: "initialization_unknown" }
+            : { status: "initialization_failed", download_token: null, token_expires_at: null }
+        ).eq("id", payment.id).eq("status", "pending");
+        if (updateError) console.error("Unable to record checkout initialization result", updateError.message);
+        return json(res, uncertain ? 503 : 502, {
+          error: uncertain
+            ? "Checkout status is uncertain. Please contact support before retrying."
+            : "Payment provider could not initialize checkout"
+        });
       }
       const { error: accessCodeError } = await db.from("audit_payments")
         .update({ access_code: result.data.access_code }).eq("id", payment.id);
-      if (accessCodeError) throw accessCodeError;
+      if (accessCodeError) {
+        // We have the authorization URL, so let the customer continue. The database
+        // row stays locked from new initialization attempts until reconciliation.
+        const { error: unknownError } = await db.from("audit_payments")
+          .update({ status: "initialization_unknown" }).eq("id", payment.id).eq("status", "pending");
+        if (unknownError) console.error("Unable to mark checkout outcome unknown", unknownError.message);
+        console.error("Paystack access code persistence failed", accessCodeError.message);
+      }
       return json(res, 200, { authorizationUrl: result.data.authorization_url, reference });
     } catch (error) {
       console.error("Paystack initialization failed", error?.message);
