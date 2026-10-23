@@ -62,11 +62,18 @@ export function createPaystackInitializeHandler({
       // index is the concurrency-safe guard; this lookup gives ordinary retries a
       // clear response without calling Paystack again.
       const { data: activePayment, error: activePaymentError } = await db.from("audit_payments")
-        .select("id").eq("audit_id", auditId).in("status", ["pending", "processing"])
+        .select("id,access_code,reference").eq("audit_id", auditId).in("status", ["pending", "processing"])
         .limit(1).maybeSingle();
       if (activePaymentError) throw activePaymentError;
+      if (activePayment?.access_code && activePayment?.reference) {
+        // Resume the existing provider checkout instead of creating another charge.
+        return json(res, 200, {
+          authorizationUrl: "https://checkout.paystack.com/" + encodeURIComponent(activePayment.access_code),
+          reference: activePayment.reference
+        });
+      }
       if (activePayment) {
-        return json(res, 409, { error: "A checkout is already pending for this report. Please wait before trying again." });
+        return json(res, 409, { error: "A checkout is already being initialized for this report. Please wait before trying again." });
       }
 
       const reference = "sitelift_" + auditId + "_" + randomBytes(16).toString("hex");
