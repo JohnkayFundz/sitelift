@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import { createPaystackWebhookHandler, validSignature } from "../api/paystack/webhook.js";
 import { createAuditPdf, processVerifiedPaystackPayment } from "../api/_lib/server.js";
+import { createPaymentStatusHandler } from "../api/paystack/status.js";
 test("Paystack webhook signature validates the exact raw body", () => {
   const raw = Buffer.from(JSON.stringify({ event: "charge.success", data: { reference: "test-reference" } }));
   const secret = "test-secret-for-unit-tests";
@@ -133,4 +134,48 @@ test("duplicate charge.success webhook leaves an existing paid record immutable"
     if (originalSecret === undefined) delete process.env.PAYSTACK_SECRET_KEY;
     else process.env.PAYSTACK_SECRET_KEY = originalSecret;
   }
+});
+
+
+test("GET payment status is read-only and never invokes payment reconciliation or signed-link creation", async () => {
+  const reference = "sitelift_decb676a-e5fb-40eb-9ea6-e983b2a4840b_c2ad7387235540f0b4eacd86bcfb87b9";
+  const token = "a".repeat(64);
+  let updateCalls = 0;
+  let signedUrlCalls = 0;
+  let selectCalls = 0;
+  const query = {
+    select() { selectCalls += 1; return this; },
+    eq() { return this; },
+    maybeSingle: async () => ({
+      data: { status: "pending", pdf_path: null, token_expires_at: "2099-01-01T00:00:00.000Z" },
+      error: null
+    }),
+    update() { updateCalls += 1; throw new Error("GET status must not write"); }
+  };
+  const db = {
+    from(table) {
+      assert.equal(table, "audit_payments");
+      return query;
+    },
+    storage: {
+      from() {
+        return { createSignedUrl() { signedUrlCalls += 1; throw new Error("GET status must not create signed URLs"); } };
+      }
+    }
+  };
+  const response = {
+    statusCode: null, headers: {}, body: null,
+    status(code) { this.statusCode = code; return this; },
+    setHeader(name, value) { this.headers[name] = value; },
+    json(body) { this.body = body; return this; }
+  };
+  const handler = createPaymentStatusHandler({ getSupabaseAdmin: () => db });
+
+  await handler({ method: "GET", query: { reference, token } }, response);
+
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(response.body, { status: "pending", downloadReady: false, downloadUrl: null });
+  assert.equal(selectCalls, 1);
+  assert.equal(updateCalls, 0);
+  assert.equal(signedUrlCalls, 0);
 });
