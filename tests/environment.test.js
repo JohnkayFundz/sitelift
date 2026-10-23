@@ -49,6 +49,15 @@ test("PageSpeed persistence checks the Preview database guard before creating a 
   assert.notEqual(guardIndex, -1, "PageSpeed must call the Preview database guard");
   assert.notEqual(clientIndex, -1, "PageSpeed must create its Supabase client");
   assert.ok(guardIndex < clientIndex, "the Preview database guard must run before client creation");
+
+  const handler = source.slice(source.indexOf("export default async function handler"));
+  const preflightIndex = handler.indexOf("assertSupabaseEnvironmentSafe();");
+  const rateLimitIndex = handler.indexOf("getLimiter().limit(clientIp(req))");
+  const pageSpeedFetchIndex = handler.indexOf("await fetch(endpoint");
+
+  assert.notEqual(preflightIndex, -1, "PageSpeed must check environment safety before processing an audit");
+  assert.ok(preflightIndex < rateLimitIndex, "unsafe Preview requests must be rejected before rate-limit usage");
+  assert.ok(preflightIndex < pageSpeedFetchIndex, "unsafe Preview requests must be rejected before calling Google PageSpeed");
 });
 
 test("server Supabase client refuses the production project in Vercel Preview before connecting", async () => {
