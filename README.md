@@ -31,6 +31,10 @@ The production API route is `POST /api/pagespeed` with JSON `{ "url": "https://e
 
 Vercel deploys the connected repository. Pull requests should pass the GitHub Actions quality workflow and be checked on their Vercel preview before merging to `main`.
 
+### Preview database safety
+
+The server-side Supabase client refuses database access when `VERCEL_ENV=preview` and the configured URL points to the SiteLift production project (`jnuqpijilwmhefbtjimx.supabase.co`). The same guard is applied to audit persistence. This is a fail-closed safety barrier, not a separate database: Preview database-backed features will return an unavailable response until Preview is configured with an independent Supabase project. Production deployments are unaffected by this Preview-only guard.
+
 ## Production notes
 
 - Response throttling allows up to five audits per IP per ten-minute window per serverless instance. It is process-local and best-effort on serverless instances; before significant public traffic, use a shared rate limiter and enforce a Google API quota.
