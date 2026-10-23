@@ -58,6 +58,17 @@ export function createPaystackInitializeHandler({
       if (auditError) throw auditError;
       if (!audit) return json(res, 404, { error: "Audit report not found" });
 
+      // A report can have only one active checkout. The database partial unique
+      // index is the concurrency-safe guard; this lookup gives ordinary retries a
+      // clear response without calling Paystack again.
+      const { data: activePayment, error: activePaymentError } = await db.from("audit_payments")
+        .select("id").eq("audit_id", auditId).in("status", ["pending", "processing"])
+        .limit(1).maybeSingle();
+      if (activePaymentError) throw activePaymentError;
+      if (activePayment) {
+        return json(res, 409, { error: "A checkout is already pending for this report. Please wait before trying again." });
+      }
+
       const reference = "sitelift_" + auditId + "_" + randomBytes(16).toString("hex");
       const downloadToken = randomBytes(32).toString("hex");
       const { data: payment, error: paymentError } = await db.from("audit_payments").insert({
@@ -65,6 +76,9 @@ export function createPaystackInitializeHandler({
         customer_email: email, status: "pending", download_token: downloadToken,
         token_expires_at: new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString()
       }).select("id").single();
+      if (paymentError?.code === "23505") {
+        return json(res, 409, { error: "A checkout is already pending for this report. Please wait before trying again." });
+      }
       if (paymentError) throw paymentError;
 
       const origin = process.env.APP_BASE_URL || "https://sitelift.vercel.app";
