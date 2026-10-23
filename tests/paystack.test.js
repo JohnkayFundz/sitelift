@@ -328,6 +328,60 @@ test("explicit payment verification refuses an invalid token before reconciliati
 });
 
 
+test("concurrent webhook duplicate is acknowledged, and a later delivery can complete after the claim is released", async () => {
+  const originalSecret = process.env.PAYSTACK_SECRET_KEY;
+  const secret = "unit-test-paystack-secret";
+  process.env.PAYSTACK_SECRET_KEY = secret;
+  const reference = "sitelift_decb676a-e5fb-40eb-9ea6-e983b2a4840b_c2ad7387235540f0b4eacd86bcfb87b9";
+  const raw = Buffer.from(JSON.stringify({
+    event: "charge.success",
+    data: { reference, status: "success", amount: 250000, currency: "NGN" }
+  }));
+  const signature = createHmac("sha512", secret).update(raw).digest("hex");
+  const results = [
+    { status: "processing", duplicate: true },
+    { status: "paid" }
+  ];
+  let processCalls = 0;
+  const handler = createPaystackWebhookHandler({
+    processPayment: async incomingReference => {
+      assert.equal(incomingReference, reference);
+      processCalls += 1;
+      return results.shift();
+    }
+  });
+  const makeResponse = () => ({
+    statusCode: null, headers: {}, body: null,
+    status(code) { this.statusCode = code; return this; },
+    setHeader(name, value) { this.headers[name] = value; },
+    json(body) { this.body = body; return this; }
+  });
+  const req = {
+    method: "POST",
+    headers: { "x-paystack-signature": signature },
+    body: raw
+  };
+
+  try {
+    const duplicateResponse = makeResponse();
+    await handler(req, duplicateResponse);
+    assert.equal(duplicateResponse.statusCode, 200);
+    assert.deepEqual(duplicateResponse.body, { received: true, duplicate: true, processing: true });
+
+    // If the original worker fails and releases its claim, a subsequent delivery
+    // must still be able to reconcile the same reference to a completed payment.
+    const retryResponse = makeResponse();
+    await handler(req, retryResponse);
+    assert.equal(retryResponse.statusCode, 200);
+    assert.deepEqual(retryResponse.body, { received: true, duplicate: false });
+    assert.equal(processCalls, 2);
+  } finally {
+    if (originalSecret === undefined) delete process.env.PAYSTACK_SECRET_KEY;
+    else process.env.PAYSTACK_SECRET_KEY = originalSecret;
+  }
+});
+
+
 function paymentProcessingHarness({ uploadError = null, paymentOverrides = {} } = {}) {
   const payment = {
     id: "payment-1", audit_id: "audit-1", amount: 250000, currency: "NGN",
