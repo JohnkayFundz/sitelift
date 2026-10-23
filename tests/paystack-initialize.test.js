@@ -66,11 +66,6 @@ test("checkout initialization rejects an existing active payment before calling 
     limit() { return this; },
     async maybeSingle() { return { data: { id: "existing-payment" }, error: null }; }
   };
-  const auditQuery = {
-    select() { return this; },
-    eq() { return this; },
-    async maybeSingle() { return { data: { id: "decb676a-e5fb-40eb-9ea6-e983b2a4840b" }, error: null }; }
-  };
   const db = {
     from(table) {
       assert.equal(table, "audits");
