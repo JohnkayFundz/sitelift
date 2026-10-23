@@ -66,6 +66,17 @@ export default async function handler(req, res) {
     return send(res, 405, { error: "Use POST to run a website audit." });
   }
 
+  try {
+    // Fail closed before consuming rate-limit or Google PageSpeed quota when Preview
+    // is configured to use the production Supabase project.
+    assertSupabaseEnvironmentSafe();
+  } catch (error) {
+    console.error("SiteLift audit environment is unsafe", error?.message);
+    return send(res, 503, {
+      error: "The audit service is unavailable in this Preview environment until an isolated database is configured."
+    });
+  }
+
   let rate;
   try { rate = await getLimiter().limit(clientIp(req)); }
   catch (error) {
