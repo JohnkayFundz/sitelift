@@ -409,7 +409,7 @@ test("payment processing releases its atomic claim when PDF storage fails", asyn
   try {
     await assert.rejects(
       processVerifiedPaystackPayment(h.payment.reference, { supabaseAdmin: () => h.db, createAuditPdf: () => Buffer.from("%PDF-test") }),
-      /storage unavailable/
+      error => error?.message === "storage unavailable"
     );
     assert.equal(h.payment.status, "pending", "failed PDF upload should return the payment to pending");
     assert.equal(h.payment.processing_started_at, null, "failed processing should release its claim");
