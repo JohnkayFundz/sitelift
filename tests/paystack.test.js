@@ -526,3 +526,41 @@ test("unconfirmed Paystack transactions release the processing claim without gen
     else process.env.PAYSTACK_SECRET_KEY = originalSecret;
   }
 });
+
+
+test("webhook enforces the 1 MB body limit for Buffer, string, and streamed requests", async () => {
+  const originalSecret = process.env.PAYSTACK_SECRET_KEY;
+  process.env.PAYSTACK_SECRET_KEY = "unit-test-paystack-secret";
+  const oversized = "x".repeat(1024 * 1024 + 1);
+  let processCalls = 0;
+  const handler = createPaystackWebhookHandler({
+    processPayment: async () => { processCalls += 1; return { status: "paid" }; }
+  });
+  const makeResponse = () => ({
+    statusCode: null, headers: {}, body: null,
+    status(code) { this.statusCode = code; return this; },
+    setHeader(name, value) { this.headers[name] = value; },
+    json(body) { this.body = body; return this; }
+  });
+  const requests = [
+    { method: "POST", headers: {}, body: Buffer.from(oversized) },
+    { method: "POST", headers: {}, body: oversized },
+    { method: "POST", headers: {}, async *[Symbol.asyncIterator]() {
+      yield Buffer.from(oversized.slice(0, 600000));
+      yield Buffer.from(oversized.slice(600000));
+    } }
+  ];
+
+  try {
+    for (const request of requests) {
+      const response = makeResponse();
+      await handler(request, response);
+      assert.equal(response.statusCode, 400);
+      assert.deepEqual(response.body, { error: "Invalid webhook body" });
+    }
+    assert.equal(processCalls, 0, "oversized request bodies must never invoke payment processing");
+  } finally {
+    if (originalSecret === undefined) delete process.env.PAYSTACK_SECRET_KEY;
+    else process.env.PAYSTACK_SECRET_KEY = originalSecret;
+  }
+});
