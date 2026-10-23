@@ -183,3 +183,146 @@ test("GET payment status is read-only and never invokes payment reconciliation o
   assert.equal(updateCalls, 0);
   assert.equal(signedUrlCalls, 0);
 });
+
+
+test("webhook rejects invalid signatures without invoking payment processing", async () => {
+  const originalSecret = process.env.PAYSTACK_SECRET_KEY;
+  process.env.PAYSTACK_SECRET_KEY = "unit-test-paystack-secret";
+  let processCalls = 0;
+  const response = {
+    statusCode: null, headers: {}, body: null,
+    status(code) { this.statusCode = code; return this; },
+    setHeader(name, value) { this.headers[name] = value; },
+    json(body) { this.body = body; return this; }
+  };
+  try {
+    const handler = createPaystackWebhookHandler({
+      processPayment: async () => { processCalls += 1; return { status: "paid" }; }
+    });
+    await handler({
+      method: "POST",
+      headers: { "x-paystack-signature": "0".repeat(128) },
+      body: Buffer.from(JSON.stringify({ event: "charge.success", data: { reference: "fake" } }))
+    }, response);
+    assert.equal(response.statusCode, 401);
+    assert.deepEqual(response.body, { error: "Invalid webhook signature" });
+    assert.equal(processCalls, 0);
+  } finally {
+    if (originalSecret === undefined) delete process.env.PAYSTACK_SECRET_KEY;
+    else process.env.PAYSTACK_SECRET_KEY = originalSecret;
+  }
+});
+
+test("webhook acknowledges unrelated events without processing a payment", async () => {
+  const originalSecret = process.env.PAYSTACK_SECRET_KEY;
+  const secret = "unit-test-paystack-secret";
+  process.env.PAYSTACK_SECRET_KEY = secret;
+  const raw = Buffer.from(JSON.stringify({ event: "transfer.success", data: { reference: "not-a-payment" } }));
+  const signature = createHmac("sha512", secret).update(raw).digest("hex");
+  let processCalls = 0;
+  const response = {
+    statusCode: null, headers: {}, body: null,
+    status(code) { this.statusCode = code; return this; },
+    setHeader(name, value) { this.headers[name] = value; },
+    json(body) { this.body = body; return this; }
+  };
+  try {
+    const handler = createPaystackWebhookHandler({
+      processPayment: async () => { processCalls += 1; return { status: "paid" }; }
+    });
+    await handler({ method: "POST", headers: { "x-paystack-signature": signature }, body: raw }, response);
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(response.body, { received: true });
+    assert.equal(processCalls, 0);
+  } finally {
+    if (originalSecret === undefined) delete process.env.PAYSTACK_SECRET_KEY;
+    else process.env.PAYSTACK_SECRET_KEY = originalSecret;
+  }
+});
+
+test("explicit payment verification creates a signed download only after token authorization and paid state", async () => {
+  const { createPaystackVerifyHandler } = await import("../api/paystack/verify.js");
+  const reference = "sitelift_decb676a-e5fb-40eb-9ea6-e983b2a4840b_c2ad7387235540f0b4eacd86bcfb87b9";
+  const token = "a".repeat(64);
+  const queryResults = [
+    { data: { status: "pending", token_expires_at: "2099-01-01T00:00:00.000Z" }, error: null },
+    { data: { status: "paid", pdf_path: "audit-test-id/report.pdf", download_token: token, token_expires_at: "2099-01-01T00:00:00.000Z" }, error: null }
+  ];
+  let queryIndex = 0;
+  let processCalls = 0;
+  let signedUrlCalls = 0;
+  const db = {
+    from(table) {
+      assert.equal(table, "audit_payments");
+      const result = queryResults[queryIndex++];
+      return {
+        select() { return this; },
+        eq() { return this; },
+        maybeSingle: async () => result
+      };
+    },
+    storage: {
+      from(bucket) {
+        assert.equal(bucket, "audit-reports");
+        return {
+          createSignedUrl: async (path, expiresIn, options) => {
+            signedUrlCalls += 1;
+            assert.equal(path, "audit-test-id/report.pdf");
+            assert.equal(expiresIn, 3600);
+            assert.deepEqual(options, { download: true });
+            return { data: { signedUrl: "https://signed.example/report.pdf" }, error: null };
+          }
+        };
+      }
+    }
+  };
+  const response = {
+    statusCode: null, headers: {}, body: null,
+    status(code) { this.statusCode = code; return this; },
+    setHeader(name, value) { this.headers[name] = value; },
+    json(body) { this.body = body; return this; }
+  };
+  const handler = createPaystackVerifyHandler({
+    getSupabaseAdmin: () => db,
+    processPayment: async incomingReference => {
+      processCalls += 1;
+      assert.equal(incomingReference, reference);
+      return { status: "paid" };
+    }
+  });
+
+  await handler({ method: "POST", body: { reference, token } }, response);
+
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(response.body, {
+    status: "paid",
+    downloadUrl: "https://signed.example/report.pdf",
+    expiresIn: 3600
+  });
+  assert.equal(processCalls, 1);
+  assert.equal(signedUrlCalls, 1);
+  assert.equal(queryIndex, 2);
+});
+
+test("explicit payment verification refuses an invalid token before reconciliation", async () => {
+  const { createPaystackVerifyHandler } = await import("../api/paystack/verify.js");
+  let processCalls = 0;
+  let dbCalls = 0;
+  const response = {
+    statusCode: null, headers: {}, body: null,
+    status(code) { this.statusCode = code; return this; },
+    setHeader(name, value) { this.headers[name] = value; },
+    json(body) { this.body = body; return this; }
+  };
+  const handler = createPaystackVerifyHandler({
+    getSupabaseAdmin: () => { dbCalls += 1; throw new Error("invalid input must not access DB"); },
+    processPayment: async () => { processCalls += 1; return { status: "paid" }; }
+  });
+
+  await handler({ method: "POST", body: { reference: "invalid", token: "invalid" } }, response);
+
+  assert.equal(response.statusCode, 403);
+  assert.deepEqual(response.body, { error: "A valid download token is required" });
+  assert.equal(dbCalls, 0);
+  assert.equal(processCalls, 0);
+});
