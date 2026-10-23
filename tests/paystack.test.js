@@ -328,27 +328,33 @@ test("explicit payment verification refuses an invalid token before reconciliati
 });
 
 
-test("concurrent webhook duplicate is acknowledged, and a later delivery can complete after the claim is released", async () => {
+test("concurrent webhook delivery sees the real processing claim, and a failed worker can be retried", async () => {
   const originalSecret = process.env.PAYSTACK_SECRET_KEY;
+  const originalFetch = globalThis.fetch;
   const secret = "unit-test-paystack-secret";
   process.env.PAYSTACK_SECRET_KEY = secret;
   const reference = "sitelift_decb676a-e5fb-40eb-9ea6-e983b2a4840b_c2ad7387235540f0b4eacd86bcfb87b9";
-  const raw = Buffer.from(JSON.stringify({
-    event: "charge.success",
-    data: { reference, status: "success", amount: 250000, currency: "NGN" }
-  }));
-  const signature = createHmac("sha512", secret).update(raw).digest("hex");
-  const results = [
-    { status: "processing", duplicate: true },
-    { status: "paid" }
-  ];
-  let processCalls = 0;
-  const handler = createPaystackWebhookHandler({
-    processPayment: async incomingReference => {
-      assert.equal(incomingReference, reference);
-      processCalls += 1;
-      return results.shift();
+  let releaseFirstVerification;
+  let firstVerificationStarted;
+  const firstStarted = new Promise(resolve => { firstVerificationStarted = resolve; });
+  const firstGate = new Promise(resolve => { releaseFirstVerification = resolve; });
+  let fetchCalls = 0;
+  globalThis.fetch = async () => {
+    fetchCalls += 1;
+    if (fetchCalls === 1) {
+      firstVerificationStarted();
+      await firstGate;
     }
+    return { ok: true, json: async () => ({ status: true, data: {
+      status: "success", reference, currency: "NGN", amount: 250000, id: 123
+    } }) };
+  };
+  const h = paymentProcessingHarness({ uploadError: { message: "storage unavailable" } });
+  const handler = createPaystackWebhookHandler({
+    processPayment: incomingReference => processVerifiedPaystackPayment(incomingReference, {
+      supabaseAdmin: () => h.db,
+      createAuditPdf: () => Buffer.from("%PDF-test")
+    })
   });
   const makeResponse = () => ({
     statusCode: null, headers: {}, body: null,
@@ -356,33 +362,48 @@ test("concurrent webhook duplicate is acknowledged, and a later delivery can com
     setHeader(name, value) { this.headers[name] = value; },
     json(body) { this.body = body; return this; }
   });
-  const req = {
-    method: "POST",
-    headers: { "x-paystack-signature": signature },
-    body: raw
-  };
+  const raw = Buffer.from(JSON.stringify({
+    event: "charge.success",
+    data: { reference, status: "success", amount: 250000, currency: "NGN" }
+  }));
+  const signature = createHmac("sha512", secret).update(raw).digest("hex");
+  const req = { method: "POST", headers: { "x-paystack-signature": signature }, body: raw };
 
   try {
+    const firstResponse = makeResponse();
+    const firstDelivery = handler(req, firstResponse);
+    await firstStarted;
+
     const duplicateResponse = makeResponse();
     await handler(req, duplicateResponse);
     assert.equal(duplicateResponse.statusCode, 200);
     assert.deepEqual(duplicateResponse.body, { received: true, duplicate: true, processing: true });
+    assert.equal(fetchCalls, 1, "the duplicate must not start a second Paystack verification while the claim is active");
 
-    // If the original worker fails and releases its claim, a subsequent delivery
-    // must still be able to reconcile the same reference to a completed payment.
+    releaseFirstVerification();
+    await firstDelivery;
+    assert.equal(firstResponse.statusCode, 500, "the first worker's storage failure should be retryable");
+    assert.equal(h.payment.status, "pending", "failed work should release the processing claim");
+    assert.equal(h.payment.processing_started_at, null);
+
+    h.setUploadError(null);
     const retryResponse = makeResponse();
     await handler(req, retryResponse);
     assert.equal(retryResponse.statusCode, 200);
     assert.deepEqual(retryResponse.body, { received: true, duplicate: false });
-    assert.equal(processCalls, 2);
+    assert.equal(h.payment.status, "paid", "a later delivery should complete using the real payment processor");
+    assert.equal(h.payment.processing_started_at, null);
+    assert.equal(fetchCalls, 2);
   } finally {
+    releaseFirstVerification();
+    globalThis.fetch = originalFetch;
     if (originalSecret === undefined) delete process.env.PAYSTACK_SECRET_KEY;
     else process.env.PAYSTACK_SECRET_KEY = originalSecret;
   }
 });
 
-
-function paymentProcessingHarness({ uploadError = null, paymentOverrides = {} } = {}) {
+function paymentProcessingHarness({ uploadError: initialUploadError = null, paymentOverrides = {} } = {}) {
+  let uploadError = initialUploadError;
   const payment = {
     id: "payment-1", audit_id: "audit-1", amount: 250000, currency: "NGN",
     status: "pending", pdf_path: null, download_token: "a".repeat(64),
@@ -445,7 +466,7 @@ function paymentProcessingHarness({ uploadError = null, paymentOverrides = {} } 
       return { upload: async () => ({ error: uploadError }) };
     } }
   };
-  return { db, payment, updates };
+  return { db, payment, updates, setUploadError(value) { uploadError = value; } };
 }
 
 test("payment processing releases its atomic claim when PDF storage fails", async () => {
