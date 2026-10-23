@@ -564,3 +564,13 @@ test("webhook enforces the 1 MB body limit for Buffer, string, and streamed requ
     else process.env.PAYSTACK_SECRET_KEY = originalSecret;
   }
 });
+
+
+test("SiteLift payment migration includes every field and status used by payment handlers", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const migration = await readFile(new URL("../supabase/migrations/202610170001_sitelift_audits_payments.sql", import.meta.url), "utf8");
+  assert.match(migration, /status text not null default 'pending' check \(status in \('pending','processing','initialization_failed','paid'\)\)/);
+  assert.match(migration, /download_token text/);
+  assert.match(migration, /token_expires_at timestamptz/);
+  assert.match(migration, /processing_started_at timestamptz/);
+});
