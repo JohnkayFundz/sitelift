@@ -18,6 +18,8 @@ create table if not exists public.audit_payments (
 );
 create index if not exists audit_payments_audit_id_idx on public.audit_payments (audit_id);
 create index if not exists audit_payments_status_idx on public.audit_payments (status);
+create unique index if not exists audit_payments_one_active_checkout_per_audit_idx
+  on public.audit_payments (audit_id) where status in ('pending','processing');
 alter table public.audits enable row level security;
 alter table public.audit_payments enable row level security;
 revoke all on public.audits from anon, authenticated;
