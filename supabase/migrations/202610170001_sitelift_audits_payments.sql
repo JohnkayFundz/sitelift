@@ -11,8 +11,9 @@ create table if not exists public.audit_payments (
   audit_id uuid not null references public.audits(id) on delete restrict,
   reference text not null unique, amount integer not null check (amount > 0),
   currency text not null default 'NGN' check (currency = 'NGN'), customer_email text not null,
-  status text not null default 'pending' check (status in ('pending','initialization_failed','paid')),
+  status text not null default 'pending' check (status in ('pending','processing','initialization_failed','paid')),
   access_code text, paystack_transaction_id text, paid_at timestamptz, pdf_path text, webhook_processed_at timestamptz,
+  download_token text, token_expires_at timestamptz, processing_started_at timestamptz,
   created_at timestamptz not null default now()
 );
 create index if not exists audit_payments_audit_id_idx on public.audit_payments (audit_id);
