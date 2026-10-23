@@ -433,10 +433,12 @@ function paymentProcessingHarness({ uploadError: initialUploadError = null, paym
             select() { wantsRow = true; return this; },
             async maybeSingle() {
               const basicMatch = filters.every(([k, v]) => payment[k] === v);
+              const staleMatch = orFilter?.match(/processing_started_at\\.lt\\.(.+)$/);
               const orMatch = !orFilter ||
                 (orFilter.includes("status.eq.pending") && payment.status === "pending") ||
                 (orFilter.includes("status.eq.processing") && payment.status === "processing" &&
-                  payment.processing_started_at && orFilter.includes("processing_started_at.lt."));
+                  payment.processing_started_at && staleMatch &&
+                  Date.parse(payment.processing_started_at) < Date.parse(staleMatch[1]));
               if (!basicMatch || !orMatch) return { data: null, error: null };
               Object.assign(payment, structuredClone(values));
               updates.push(structuredClone(values));
