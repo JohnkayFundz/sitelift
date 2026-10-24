@@ -402,75 +402,599 @@ test("concurrent webhook delivery sees the real processing claim, and a failed w
   }
 });
 
-function paymentProcessingHarness({ uploadError: initialUploadError = null, paymentOverrides = {} } = {}) {
+function paymentProcessingHarness({
+  uploadError: initialUploadError = null,
+  paymentOverrides = {}
+} = {}) {
   let uploadError = initialUploadError;
+  let uploadCalls = 0;
+
   const payment = {
-    id: "payment-1", audit_id: "audit-1", amount: 250000, currency: "NGN",
-    status: "pending", pdf_path: null, download_token: "a".repeat(64),
-    token_expires_at: "2099-01-01T00:00:00.000Z", processing_started_at: null,
-    reference: "sitelift_decb676a-e5fb-40eb-9ea6-e983b2a4840b_c2ad7387235540f0b4eacd86bcfb87b9",
+    id: "payment-1",
+    audit_id: "audit-1",
+    amount: 250000,
+    currency: "NGN",
+    status: "pending",
+    pdf_path: null,
+    download_token: "a".repeat(64),
+    token_expires_at: "2099-01-01T00:00:00.000Z",
+    processing_started_at: null,
+    reference:
+      "sitelift_decb676a-e5fb-40eb-9ea6-e983b2a4840b_c2ad7387235540f0b4eacd86bcfb87b9",
     ...paymentOverrides
   };
+
+  // Preserve existing test semantics: successful mutations only.
   const updates = [];
+  const updateAttempts = [];
+  const successfulUpdates = [];
+  const rejectedUpdates = [];
+
+  function matchesUpdate(filters, orFilter) {
+    const basicMatch = filters.every(
+      ([key, value]) => payment[key] === value
+    );
+
+    if (!basicMatch) return false;
+    if (!orFilter) return true;
+
+    if (orFilter === "download_token.is.null,token_expires_at.is.null") {
+      return (
+        payment.download_token == null ||
+        payment.token_expires_at == null
+      );
+    }
+
+    const staleMatch = orFilter.match(
+      /processing_started_at\.lt\.(.+)$/
+    );
+
+    return (
+      (orFilter.includes("status.eq.pending") &&
+        payment.status === "pending") ||
+      (orFilter.includes("status.eq.initialization_unknown") &&
+        payment.status === "initialization_unknown") ||
+      (orFilter.includes("status.eq.processing") &&
+        payment.status === "processing" &&
+        payment.processing_started_at != null &&
+        staleMatch != null &&
+        Date.parse(payment.processing_started_at) <
+          Date.parse(staleMatch[1]))
+    );
+  }
+
+  function recordUpdateAttempt(filters, orFilter, values) {
+    const matched = matchesUpdate(filters, orFilter);
+    const attempt = {
+      filters: structuredClone(filters),
+      orFilter,
+      values: structuredClone(values),
+      matched
+    };
+
+    updateAttempts.push(attempt);
+
+    if (!matched) {
+      rejectedUpdates.push(attempt);
+      return false;
+    }
+
+    Object.assign(payment, structuredClone(values));
+    updates.push(structuredClone(values));
+    successfulUpdates.push(attempt);
+    return true;
+  }
+
   const db = {
     from(table) {
-      if (table === "audit_payments") return {
-        select() {
-          const filters = [];
-          const q = {
-            eq(k, v) { filters.push([k, v]); return this; },
-            maybeSingle: async () => ({ data: filters.some(([k, v]) => payment[k] !== v) ? null : structuredClone(payment), error: null })
-          };
-          return q;
-        },
-        update(values) {
-          const filters = [];
-          let orFilter = null;
-          let wantsRow = false;
-          const q = {
-            eq(k, v) { filters.push([k, v]); return this; },
-            or(v) { orFilter = v; return this; },
-            select() { wantsRow = true; return this; },
-            async maybeSingle() {
-              const basicMatch = filters.every(([k, v]) => payment[k] === v);
-              const staleMatch = orFilter?.match(/processing_started_at\\.lt\\.(.+)$/);
-              const orMatch = !orFilter ||
-                (orFilter.includes("status.eq.pending") && payment.status === "pending") ||
-                (orFilter.includes("status.eq.initialization_unknown") && payment.status === "initialization_unknown") ||
-                (orFilter.includes("status.eq.processing") && payment.status === "processing" &&
-                  payment.processing_started_at && staleMatch &&
-                  Date.parse(payment.processing_started_at) < Date.parse(staleMatch[1]));
-              if (!basicMatch || !orMatch) return { data: null, error: null };
-              Object.assign(payment, structuredClone(values));
-              updates.push(structuredClone(values));
-              return { data: wantsRow ? { id: payment.id } : null, error: null };
-            },
-            then(resolve, reject) {
-              const basicMatch = filters.every(([k, v]) => payment[k] === v);
-              if (basicMatch) {
-                Object.assign(payment, structuredClone(values));
-                updates.push(structuredClone(values));
+      if (table === "audit_payments") {
+        return {
+          select() {
+            const filters = [];
+
+            return {
+              eq(key, value) {
+                filters.push([key, value]);
+                return this;
+              },
+
+              maybeSingle: async () => ({
+                data: filters.some(
+                  ([key, value]) => payment[key] !== value
+                )
+                  ? null
+                  : structuredClone(payment),
+                error: null
+              })
+            };
+          },
+
+          update(values) {
+            const filters = [];
+            let orFilter = null;
+            let wantsRow = false;
+
+            const query = {
+              eq(key, value) {
+                filters.push([key, value]);
+                return this;
+              },
+
+              or(value) {
+                orFilter = value;
+                return this;
+              },
+
+              select() {
+                wantsRow = true;
+                return this;
+              },
+
+              async maybeSingle() {
+                const matched = recordUpdateAttempt(
+                  filters,
+                  orFilter,
+                  values
+                );
+
+                if (!matched) {
+                  return { data: null, error: null };
+                }
+
+                return {
+                  data: wantsRow ? { id: payment.id } : null,
+                  error: null
+                };
+              },
+
+              then(resolve, reject) {
+                recordUpdateAttempt(filters, orFilter, values);
+                return Promise.resolve({ error: null }).then(
+                  resolve,
+                  reject
+                );
               }
-              return Promise.resolve({ error: null }).then(resolve, reject);
-            }
-          };
-          return q;
-        }
-      };
-      if (table === "audits") return {
-        select() { return this; },
-        eq() { return this; },
-        single: async () => ({ data: { id: "audit-1", target_url: "https://example.com", final_url: "https://example.com/", strategy: "mobile", created_at: "2026-10-20T00:00:00.000Z", report: { scores: [], metrics: [], opportunities: [] } }, error: null })
-      };
+            };
+
+            return query;
+          }
+        };
+      }
+
+      if (table === "audits") {
+        return {
+          select() {
+            return this;
+          },
+
+          eq() {
+            return this;
+          },
+
+          single: async () => ({
+            data: {
+              id: "audit-1",
+              target_url: "https://example.com",
+              final_url: "https://example.com/",
+              strategy: "mobile",
+              created_at: "2026-10-20T00:00:00.000Z",
+              report: {
+                scores: [],
+                metrics: [],
+                opportunities: []
+              }
+            },
+            error: null
+          })
+        };
+      }
+
       throw new Error("Unexpected table " + table);
     },
-    storage: { from(bucket) {
-      assert.equal(bucket, "audit-reports");
-      return { upload: async () => ({ error: uploadError }) };
-    } }
+
+    storage: {
+      from(bucket) {
+        assert.equal(bucket, "audit-reports");
+
+        return {
+          upload: async () => {
+            uploadCalls += 1;
+            return { error: uploadError };
+          }
+        };
+      }
+    }
   };
-  return { db, payment, updates, setUploadError(value) { uploadError = value; } };
+
+  return {
+    db,
+    payment,
+    updates,
+    updateAttempts,
+    successfulUpdates,
+    rejectedUpdates,
+    get uploadCalls() {
+      return uploadCalls;
+    },
+    setUploadError(value) {
+      uploadError = value;
+    }
+  };
 }
+
+function installControlledClock(initialTime) {
+  const RealDate = globalThis.Date;
+  let currentTime = initialTime;
+
+  globalThis.Date = class ControlledDate extends RealDate {
+    constructor(...args) {
+      super(...(args.length ? args : [currentTime]));
+    }
+
+    static now() {
+      return currentTime;
+    }
+  };
+
+  return {
+    advance(milliseconds) {
+      currentTime += milliseconds;
+    },
+
+    restore() {
+      globalThis.Date = RealDate;
+    }
+  };
+}
+
+test("stale worker cannot reset a newer worker's processing claim", async () => {
+  const originalSecret = process.env.PAYSTACK_SECRET_KEY;
+  const originalFetch = globalThis.fetch;
+  const clock = installControlledClock(
+    new Date("2026-10-24T12:00:00.000Z").getTime()
+  );
+
+  process.env.PAYSTACK_SECRET_KEY = "unit-test-paystack-secret";
+
+  const reference =
+    "sitelift_decb676a-e5fb-40eb-9ea6-e983b2a4840b_c2ad7387235540f0b4eacd86bcfb87b9";
+
+  let fetchCalls = 0;
+  let releaseA;
+  let releaseB;
+  let startedA;
+  let startedB;
+
+  const gateA = new Promise(resolve => {
+    releaseA = resolve;
+  });
+
+  const gateB = new Promise(resolve => {
+    releaseB = resolve;
+  });
+
+  const firstStarted = new Promise(resolve => {
+    startedA = resolve;
+  });
+
+  const secondStarted = new Promise(resolve => {
+    startedB = resolve;
+  });
+
+  globalThis.fetch = async () => {
+    fetchCalls += 1;
+
+    if (fetchCalls === 1) {
+      startedA();
+      await gateA;
+
+      return {
+        ok: true,
+        json: async () => ({
+          status: true,
+          data: {
+            status: "pending",
+            reference,
+            currency: "NGN",
+            amount: 250000,
+            id: 123
+          }
+        })
+      };
+    }
+
+    startedB();
+    await gateB;
+
+    return {
+      ok: true,
+      json: async () => ({
+        status: true,
+        data: {
+          status: "success",
+          reference,
+          currency: "NGN",
+          amount: 250000,
+          id: 124
+        }
+      })
+    };
+  };
+
+  const h = paymentProcessingHarness();
+
+  const process = () =>
+    processVerifiedPaystackPayment(reference, {
+      supabaseAdmin: () => h.db,
+      createAuditPdf: () => Buffer.from("%PDF-test")
+    });
+
+  const originalError = console.error;
+  console.error = () => {};
+
+  try {
+    const workerA = process();
+    await firstStarted;
+
+    const timestampA = h.payment.processing_started_at;
+    clock.advance(180001);
+
+    const workerB = process();
+    await secondStarted;
+
+    const timestampB = h.payment.processing_started_at;
+    assert.notEqual(timestampA, timestampB);
+    assert.equal(h.payment.status, "processing");
+
+    releaseA();
+    const resultA = await workerA;
+
+    assert.deepEqual(resultA, { status: "pending" });
+    assert.equal(h.payment.status, "processing");
+    assert.equal(h.payment.processing_started_at, timestampB);
+
+    assert.ok(
+      h.rejectedUpdates.some(
+        attempt =>
+          attempt.values.status === "pending" &&
+          attempt.values.processing_started_at === null &&
+          attempt.filters.some(
+            ([key, value]) =>
+              key === "processing_started_at" &&
+              value === timestampA
+          )
+      ),
+      "the stale worker's reset should be rejected"
+    );
+
+    releaseB();
+    const resultB = await workerB;
+
+    assert.equal(resultB.status, "paid");
+    assert.equal(h.payment.status, "paid");
+    assert.equal(h.payment.processing_started_at, null);
+  } finally {
+    releaseA();
+    releaseB();
+    console.error = originalError;
+    globalThis.fetch = originalFetch;
+    clock.restore();
+
+    if (originalSecret === undefined) {
+      delete process.env.PAYSTACK_SECRET_KEY;
+    } else {
+      process.env.PAYSTACK_SECRET_KEY = originalSecret;
+    }
+  }
+});
+
+test("stale worker cannot overwrite a newer worker's completed payment", async () => {
+  const originalSecret = process.env.PAYSTACK_SECRET_KEY;
+  const originalFetch = globalThis.fetch;
+  const clock = installControlledClock(
+    new Date("2026-10-24T12:00:00.000Z").getTime()
+  );
+
+  process.env.PAYSTACK_SECRET_KEY = "unit-test-paystack-secret";
+
+  const reference =
+    "sitelift_decb676a-e5fb-40eb-9ea6-e983b2a4840b_c2ad7387235540f0b4eacd86bcfb87b9";
+
+  let fetchCalls = 0;
+  let releaseA;
+  let releaseB;
+  let startedA;
+  let startedB;
+
+  const gateA = new Promise(resolve => {
+    releaseA = resolve;
+  });
+
+  const gateB = new Promise(resolve => {
+    releaseB = resolve;
+  });
+
+  const firstStarted = new Promise(resolve => {
+    startedA = resolve;
+  });
+
+  const secondStarted = new Promise(resolve => {
+    startedB = resolve;
+  });
+
+  globalThis.fetch = async () => {
+    fetchCalls += 1;
+    const isWorkerA = fetchCalls === 1;
+
+    if (isWorkerA) {
+      startedA();
+      await gateA;
+    } else {
+      startedB();
+      await gateB;
+    }
+
+    return {
+      ok: true,
+      json: async () => ({
+        status: true,
+        data: {
+          status: "success",
+          reference,
+          currency: "NGN",
+          amount: 250000,
+          id: isWorkerA ? 123 : 124
+        }
+      })
+    };
+  };
+
+  const h = paymentProcessingHarness();
+
+  const process = () =>
+    processVerifiedPaystackPayment(reference, {
+      supabaseAdmin: () => h.db,
+      createAuditPdf: () => Buffer.from("%PDF-test")
+    });
+
+  try {
+    const workerA = process();
+    await firstStarted;
+
+    const timestampA = h.payment.processing_started_at;
+    clock.advance(180001);
+
+    const workerB = process();
+    await secondStarted;
+
+    const timestampB = h.payment.processing_started_at;
+    assert.notEqual(timestampA, timestampB);
+
+    releaseB();
+    const resultB = await workerB;
+
+    assert.equal(resultB.status, "paid");
+    assert.equal(h.payment.status, "paid");
+    assert.equal(h.payment.processing_started_at, null);
+
+    const paidAtB = h.payment.paid_at;
+    const transactionIdB = h.payment.paystack_transaction_id;
+    const pdfPathB = h.payment.pdf_path;
+
+    releaseA();
+    const resultA = await workerA;
+
+    assert.deepEqual(resultA, {
+      status: "processing",
+      duplicate: true
+    });
+
+    assert.equal(h.payment.status, "paid");
+    assert.equal(h.payment.processing_started_at, null);
+    assert.equal(h.payment.paid_at, paidAtB);
+    assert.equal(
+      h.payment.paystack_transaction_id,
+      transactionIdB
+    );
+    assert.equal(h.payment.pdf_path, pdfPathB);
+
+    assert.ok(
+      h.rejectedUpdates.some(
+        attempt =>
+          attempt.values.status === "paid" &&
+          attempt.filters.some(
+            ([key, value]) =>
+              key === "processing_started_at" &&
+              value === timestampA
+          )
+      ),
+      "the stale worker's completion should be rejected"
+    );
+
+    // Both workers may upload before the database completion guard rejects A.
+    assert.equal(h.uploadCalls, 2);
+  } finally {
+    releaseA();
+    releaseB();
+    globalThis.fetch = originalFetch;
+    clock.restore();
+
+    if (originalSecret === undefined) {
+      delete process.env.PAYSTACK_SECRET_KEY;
+    } else {
+      process.env.PAYSTACK_SECRET_KEY = originalSecret;
+    }
+  }
+});
+
+test("processing claim exactly at the stale cutoff is not reclaimed", async () => {
+  const originalSecret = process.env.PAYSTACK_SECRET_KEY;
+  const originalFetch = globalThis.fetch;
+
+  const now = new Date("2026-10-24T12:00:00.000Z");
+  const cutoff = new Date(now.getTime() - 180000).toISOString();
+  const clock = installControlledClock(now.getTime());
+
+  process.env.PAYSTACK_SECRET_KEY = "unit-test-paystack-secret";
+
+  let fetchCalls = 0;
+
+  globalThis.fetch = async () => {
+    fetchCalls += 1;
+
+    return {
+      ok: true,
+      json: async () => ({
+        status: true,
+        data: {
+          status: "success",
+          reference:
+            "sitelift_decb676a-e5fb-40eb-9ea6-e983b2a4840b_c2ad7387235540f0b4eacd86bcfb87b9",
+          currency: "NGN",
+          amount: 250000,
+          id: 123
+        }
+      })
+    };
+  };
+
+  const h = paymentProcessingHarness({
+    paymentOverrides: {
+      status: "processing",
+      processing_started_at: cutoff
+    }
+  });
+
+  try {
+    const result = await processVerifiedPaystackPayment(
+      h.payment.reference,
+      {
+        supabaseAdmin: () => h.db,
+        createAuditPdf: () => Buffer.from("%PDF-test")
+      }
+    );
+
+    assert.deepEqual(result, {
+      status: "processing",
+      duplicate: true
+    });
+
+    assert.equal(h.payment.status, "processing");
+    assert.equal(h.payment.processing_started_at, cutoff);
+    assert.equal(fetchCalls, 0);
+    assert.equal(h.successfulUpdates.length, 0);
+    assert.equal(h.rejectedUpdates.length, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+    clock.restore();
+
+    if (originalSecret === undefined) {
+      delete process.env.PAYSTACK_SECRET_KEY;
+    } else {
+      process.env.PAYSTACK_SECRET_KEY = originalSecret;
+    }
+  }
+});
 
 test("payment processing releases its atomic claim when PDF storage fails", async () => {
   const originalSecret = process.env.PAYSTACK_SECRET_KEY;
