@@ -20,7 +20,7 @@ async function configured(run, { key = "test-resend-key", from = "SiteLift Test 
 }
 
 function harness({ initial = payment(), fetchImpl = async () => ({ ok: true, status: 200 }), tokens = ["fresh-token"] } = {}) {
-  const state = structuredClone(initial), mutations = [], deliveries = [];
+  const state = structuredClone(initial), mutations = [], deliveries = [], rateLimitKeys = [];
   let tokenIndex = 0;
   const db = { from(table) {
     assert.equal(table, "audit_payments");
@@ -48,12 +48,12 @@ function harness({ initial = payment(), fetchImpl = async () => ({ ok: true, sta
   } };
   const handler = createResendLinkHandler({
     getSupabaseAdmin: () => db,
-    createRateLimiter: () => ({ limit: async () => ({ success: true }) }),
+    createRateLimiter: () => ({ limit: async (key) => { rateLimitKeys.push(key); return { success: true }; } }),
     fetchImpl: async (...args) => { deliveries.push(args); return fetchImpl(...args); },
     now: () => nowMs,
     createToken: () => tokens[Math.min(tokenIndex++, tokens.length - 1)]
   });
-  return { handler, state, mutations, deliveries };
+  return { handler, state, mutations, deliveries, rateLimitKeys };
 }
 
 test("missing Resend configuration returns 503 without rotating a token", async () => configured(async () => {
@@ -124,4 +124,29 @@ test("concurrent recovery requests produce one token rotation and exactly one em
   assert.equal(h.deliveries.length, 1);
   assert.equal(h.mutations.length, 1);
   assert.equal(h.state.download_token, "fresh-token-1");
+}));
+
+
+test("rate limiter uses the first X-Forwarded-For address", async () => configured(async () => {
+  const h = harness(), request = req({ reference: "invalid-reference" }), res = response();
+  request.headers["x-forwarded-for"] = "203.0.113.10, 10.0.0.1";
+  await h.handler(request, res);
+  assert.deepEqual(h.rateLimitKeys, ["203.0.113.10"]);
+  assert.equal(res.statusCode, 200);
+}));
+
+test("rate limiter falls back to X-Real-IP when X-Forwarded-For is absent", async () => configured(async () => {
+  const h = harness(), request = req({ reference: "invalid-reference" }), res = response();
+  request.headers["x-real-ip"] = "198.51.100.25";
+  await h.handler(request, res);
+  assert.deepEqual(h.rateLimitKeys, ["198.51.100.25"]);
+  assert.equal(res.statusCode, 200);
+}));
+
+test("rate limiter falls back to the socket remote address when proxy headers are absent", async () => configured(async () => {
+  const h = harness(), request = req({ reference: "invalid-reference" }), res = response();
+  request.socket.remoteAddress = "192.0.2.44";
+  await h.handler(request, res);
+  assert.deepEqual(h.rateLimitKeys, ["192.0.2.44"]);
+  assert.equal(res.statusCode, 200);
 }));
