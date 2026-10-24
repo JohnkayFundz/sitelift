@@ -46,7 +46,7 @@ test("payment status constraint preserves every status used by checkout and proc
 
 test("forward-only production correction is repeatable and allows exactly the five payment states", async () => {
   const migration = await readFile(
-    new URL("../supabase/migrations/20261024140000_sitelift_payment_status_fix.sql", import.meta.url),
+    new URL("../supabase/migrations/20261024141053_sitelift_payment_status_fix.sql", import.meta.url),
     "utf8"
   );
 
