@@ -9,26 +9,17 @@ test("public audit report sanitizer removes unexpected stored metadata", () => {
     strategy: "mobile",
     fetchedAt: "2026-10-24T09:00:00.000Z",
     scores: [{
-      key: "performance",
-      label: "Performance",
-      value: 92,
-      rating: "good",
-      ratingLabel: "Good",
-      clientIp: "192.0.2.10",
-      internalNotes: "do not expose",
+      key: "performance", label: "Performance", value: 92, rating: "good", ratingLabel: "Good",
+      clientIp: "192.0.2.10", internalNotes: "do not expose",
       payment: { reference: "pay_test_secret" }
     }],
     metrics: [{
-      key: "largest-contentful-paint",
-      label: "Largest Contentful Paint",
-      value: "2.1 s",
+      key: "largest-contentful-paint", label: "Largest Contentful Paint", value: "2.1 s",
       internalHeaders: { authorization: "Bearer mock-secret" }
     }],
     opportunities: [{
-      id: "unused-javascript",
-      title: "Reduce unused JavaScript",
-      displayValue: "Potential savings",
-      description: "Review bundles.",
+      id: "unused-javascript", title: "Reduce unused JavaScript",
+      displayValue: "Potential savings", description: "Review bundles.",
       customerEmail: "private@example.com",
       paymentMetadata: { amount: 2500, reference: "mock-payment-ref" }
     }],
@@ -42,7 +33,7 @@ test("public audit report sanitizer removes unexpected stored metadata", () => {
   const sanitized = sanitizePublicAuditReport(report);
 
   assert.deepEqual(Object.keys(sanitized).sort(), [
-    "finalUrl", "fetchedAt", "metrics", "opportunities", "scores", "strategy", "url"
+    "fetchedAt", "finalUrl", "metrics", "opportunities", "scores", "strategy", "url"
   ]);
   assert.deepEqual(Object.keys(sanitized.scores[0]).sort(), [
     "key", "label", "rating", "ratingLabel", "value"
