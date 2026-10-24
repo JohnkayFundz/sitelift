@@ -9,6 +9,7 @@ alter table public.audit_payments
   check (status = any (array[
     'pending'::text,
     'processing'::text,
+    'initialization_unknown'::text,
     'initialization_failed'::text,
     'paid'::text
   ]));
