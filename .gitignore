@@ -22,3 +22,11 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+.vercel
+.env*
+
+!.env.example
+/manual-tests/
+*.bak-*
+/webhook-response.json

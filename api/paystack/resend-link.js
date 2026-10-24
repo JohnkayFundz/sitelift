@@ -10,8 +10,18 @@ function normalizedEmail(value) {
 }
 
 function requestIp(req) {
-  const forwarded = req.headers["x-forwarded-for"];
-  if (typeof forwarded === "string" && forwarded.length) return forwarded.split(",")[0].trim().slice(0, 100);
+  const forwardedFor = req.headers?.["x-forwarded-for"];
+
+  if (typeof forwardedFor === "string" && forwardedFor.trim()) {
+    const primaryIp = forwardedFor.split(",")[0].trim();
+    if (primaryIp) return primaryIp.slice(0, 100);
+  }
+
+  const realIp = req.headers?.["x-real-ip"];
+  if (typeof realIp === "string" && realIp.trim()) {
+    return realIp.trim().slice(0, 100);
+  }
+
   return String(req.socket?.remoteAddress || "unknown").slice(0, 100);
 }
 
