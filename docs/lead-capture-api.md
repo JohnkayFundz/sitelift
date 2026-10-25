@@ -55,3 +55,8 @@ The checklist email is transactional and is sent independently of `marketingCons
 - `RESEND_FROM_EMAIL`
 
 Do not expose service-role or Resend keys through Vite `VITE_*` variables. Apply the SQL migration only after reviewing the local/remote migration ledger for the dedicated SiteLift project. Do not run migrations against production as part of code review.
+
+
+## Scheduled worker invocation
+
+Vercel Cron is configured to call `GET /api/cron/deliver-checklists` every five minutes. Set a high-entropy `CRON_SECRET` in the Vercel environment before enabling the deployment. The route requires the exact `Authorization: Bearer <CRON_SECRET>` header, processes at most ten jobs per invocation, and returns aggregate status counts only. If `CRON_SECRET` is missing, it returns `503`; invalid credentials return `401`. Do not expose this secret in frontend variables or logs.
