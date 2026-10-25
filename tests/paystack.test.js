@@ -723,7 +723,7 @@ test("stale worker cannot reset a newer worker's processing claim", async () => 
 
   const h = paymentProcessingHarness();
 
-  const process = () =>
+  const runPayment = () =>
     processVerifiedPaystackPayment(reference, {
       supabaseAdmin: () => h.db,
       createAuditPdf: () => Buffer.from("%PDF-test")
@@ -733,13 +733,13 @@ test("stale worker cannot reset a newer worker's processing claim", async () => 
   console.error = () => {};
 
   try {
-    const workerA = process();
+    const workerA = runPayment();
     await firstStarted;
 
     const timestampA = h.payment.processing_started_at;
     clock.advance(180001);
 
-    const workerB = process();
+    const workerB = runPayment();
     await secondStarted;
 
     const timestampB = h.payment.processing_started_at;
@@ -851,20 +851,20 @@ test("stale worker cannot overwrite a newer worker's completed payment", async (
 
   const h = paymentProcessingHarness();
 
-  const process = () =>
+  const runPayment = () =>
     processVerifiedPaystackPayment(reference, {
       supabaseAdmin: () => h.db,
       createAuditPdf: () => Buffer.from("%PDF-test")
     });
 
   try {
-    const workerA = process();
+    const workerA = runPayment();
     await firstStarted;
 
     const timestampA = h.payment.processing_started_at;
     clock.advance(180001);
 
-    const workerB = process();
+    const workerB = runPayment();
     await secondStarted;
 
     const timestampB = h.payment.processing_started_at;
