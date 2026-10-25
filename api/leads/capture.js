@@ -72,7 +72,11 @@ function optionalText(value, maxLength, field) {
   if (value === undefined || value === null || value === "") return null;
   if (typeof value !== "string") throw new Error("invalid_" + field);
   const normalized = value.trim();
-  if (normalized.length > maxLength || /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/.test(normalized)) {
+  const hasControlCharacter = Array.from(normalized).some(char => {
+    const code = char.charCodeAt(0);
+    return code <= 8 || code === 11 || code === 12 || (code >= 14 && code <= 31) || code === 127;
+  });
+  if (normalized.length > maxLength || hasControlCharacter) {
     throw new Error("invalid_" + field);
   }
   return normalized || null;
