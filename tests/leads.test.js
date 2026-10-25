@@ -36,7 +36,9 @@ function dbHarness({ audit = { id: auditId, target_url: "https://example.com/", 
     },
     async rpc(name, args) {
       calls.push(["rpc", name, args]);
-      return { data: rpcResult, error: rpcError };
+      const callNumber = calls.filter(call => call[0] === "rpc").length;
+      const resolved = typeof rpcResult === "function" ? rpcResult(callNumber, args) : rpcResult;
+      return { data: resolved, error: rpcError };
     }
   };
   return { db, calls };
@@ -81,15 +83,18 @@ test("valid lead submission persists atomically and returns durable queued lead 
 });
 
 test("repeated idempotent submission returns existing durable lead without changing consent", async () => {
-  const h = handlerHarness({ dbState: { rpcResult: [{ lead_id: "lead-existing", delivery_job_id: "job-existing", idempotent: true }] } });
+  const h = handlerHarness({ dbState: { rpcResult: (callNumber) => [{
+    lead_id: "lead-existing", delivery_job_id: "job-existing", idempotent: callNumber > 1
+  }] } });
   const a = response(), b = response();
   await h.handler(req(), a);
   await h.handler(req({ ...input, marketingConsent: true }), b);
-  assert.equal(a.statusCode, 200);
+  assert.equal(a.statusCode, 201);
   assert.equal(b.statusCode, 200);
+  assert.equal(a.body.leadId, b.body.leadId);
   const calls = h.calls.filter(call => call[0] === "rpc");
   assert.equal(calls[0][2].p_idempotency_key, calls[1][2].p_idempotency_key);
-  assert.equal(calls[1][2].p_marketing_consent, true, "RPC sees submitted value but SQL idempotency path must not mutate existing consent");
+  assert.equal(calls[1][2].p_marketing_consent, true, "SQL idempotency path must not mutate existing consent");
 });
 
 test("invalid email is rejected before rate limiter or database access", async () => {
