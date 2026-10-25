@@ -127,19 +127,21 @@ test("concurrent recovery requests produce one token rotation and exactly one em
 }));
 
 
-test("rate limiter uses the first X-Forwarded-For address", async () => configured(async () => {
+test("rate limiter prefers the platform client IP and ignores spoofed X-Forwarded-For", async () => configured(async () => {
   const h = harness(), request = req({ reference: "invalid-reference" }), res = response();
+  request.headers["x-real-ip"] = "198.51.100.25";
   request.headers["x-forwarded-for"] = "203.0.113.10, 10.0.0.1";
   await h.handler(request, res);
-  assert.deepEqual(h.rateLimitKeys, ["203.0.113.10"]);
+  assert.deepEqual(h.rateLimitKeys, ["198.51.100.25"]);
   assert.equal(res.statusCode, 200);
 }));
 
-test("rate limiter falls back to X-Real-IP when X-Forwarded-For is absent", async () => configured(async () => {
+test("rate limiter ignores X-Forwarded-For and falls back to the socket address", async () => configured(async () => {
   const h = harness(), request = req({ reference: "invalid-reference" }), res = response();
-  request.headers["x-real-ip"] = "198.51.100.25";
+  request.headers["x-forwarded-for"] = "203.0.113.10, 10.0.0.1";
+  request.socket.remoteAddress = "192.0.2.44";
   await h.handler(request, res);
-  assert.deepEqual(h.rateLimitKeys, ["198.51.100.25"]);
+  assert.deepEqual(h.rateLimitKeys, ["192.0.2.44"]);
   assert.equal(res.statusCode, 200);
 }));
 

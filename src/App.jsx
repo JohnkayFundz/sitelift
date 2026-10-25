@@ -123,13 +123,13 @@ function App() {
     const reference = params.get("reference") || params.get("trxref");
     const token = params.get("token");
     if (params.get("payment") !== "return" || !reference || !token) return;
-    let cancelled = false, attempts = 0;
+    let cancelled = false, attempts = 0, recoveryTimer;
 
     const showExpiredToken = () => {
       if (cancelled) return;
       setRecoveryVisible(true);
       setRecoveryReference(reference);
-      setPaymentMessage("Your 24-hour download link has expired. Enter the email address used at checkout and your payment reference to receive a fresh secure link.");
+      setPaymentMessage("Your secure download link has expired. Enter the email address used at checkout and your payment reference to receive a fresh secure link.");
     };
 
     const verifyForDownload = async () => {
@@ -177,13 +177,26 @@ function App() {
     (async () => {
       try {
         const complete = await verifyForDownload();
-        if (!complete && !cancelled) checkReadOnlyStatus();
+        if (!complete && !cancelled) {
+          checkReadOnlyStatus();
+          // Processing claims become reclaimable after three minutes. Schedule
+          // one token-authorized POST retry after that window so a crashed
+          // worker can be recovered without making the GET status endpoint write.
+          recoveryTimer = window.setTimeout(async () => {
+            try {
+              const recovered = await verifyForDownload();
+              if (!recovered && !cancelled) checkReadOnlyStatus();
+            } catch {
+              if (!cancelled) checkReadOnlyStatus();
+            }
+          }, 185000);
+        }
       } catch {
         if (!cancelled) checkReadOnlyStatus();
       }
     })();
 
-    return () => { cancelled = true; };
+    return () => { cancelled = true; window.clearTimeout(recoveryTimer); };
   }, []);
   const requestFreshDownloadLink = async () => {
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(paymentEmail.trim())) {
@@ -683,6 +696,11 @@ function App() {
           <span><strong>SiteLift</strong><small>by JohnKay Fundz</small></span>
         </a>
         <p>Practical website improvement for growing businesses.</p>
+        <nav className="footer-resources" aria-label="Free website guides">
+          <a href="/website-speed-test.html">Website speed test guide</a>
+          <a href="/website-seo-checker.html">Website SEO checker guide</a>
+          <a href="/website-audit-checklist.html">Small business audit checklist</a>
+        </nav>
         <a href="#home">Back to top ↑</a>
       </footer>
     </div>

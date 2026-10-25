@@ -26,6 +26,9 @@ test("webhook processing claims a payment atomically and acknowledges in-progres
   assert.match(server, /status\.eq\.pending,status\.eq\.initialization_unknown,and\(status\.eq\.processing,processing_started_at\.lt\./);
   assert.match(server, /\.eq\("status", "processing"\)\.eq\("processing_started_at", nowIso\)/);
   assert.match(webhook, /result\.status === "processing"[\s\S]*?json\(res, 200,[\s\S]*?duplicate: true/);
+  const app = await readFile(new URL("../src/App.jsx", import.meta.url), "utf8");
+  assert.match(app, /recoveryTimer = window\.setTimeout[\s\S]*?\}, 185000\)/);
+  assert.match(app, /clearTimeout\(recoveryTimer\)/);
 });
 
 test("expired tokens have a distinct reason and the recovery endpoint only emails the stored checkout address", async () => {
@@ -34,7 +37,7 @@ test("expired tokens have a distinct reason and the recovery endpoint only email
   const recovery = await readFile(new URL("../api/paystack/resend-link.js", import.meta.url), "utf8");
   const app = await readFile(new URL("../src/App.jsx", import.meta.url), "utf8");
   assert.match(status, /reason: "expired_token"/);
-  assert.match(app, /Your 24-hour download link has expired/);
+  assert.match(app, /Your secure download link has expired/);
   assert.ok(app.includes('"/api/paystack/resend-link"'));
   assert.match(recovery, /to: \[payment\.customer_email\]/);
   assert.match(recovery, /const GENERIC_MESSAGE = "If the reference and email match a paid record/);
@@ -1126,11 +1129,18 @@ test("webhook enforces the 1 MB body limit for Buffer, string, and streamed requ
 });
 
 
-test("SiteLift payment migration includes every field and status used by payment handlers", async () => {
+test("SiteLift payment fields and states are represented across the reconciled migration history", async () => {
   const { readFile } = await import("node:fs/promises");
-  const migration = await readFile(new URL("../supabase/migrations/202610170001_sitelift_audits_payments.sql", import.meta.url), "utf8");
-  assert.match(migration, /status text not null default 'pending' check \(status in \('pending','processing','initialization_unknown','initialization_failed','paid'\)\)/);
-  assert.match(migration, /download_token text/);
-  assert.match(migration, /token_expires_at timestamptz/);
-  assert.match(migration, /processing_started_at timestamptz/);
+  const initial = await readFile(new URL("../supabase/migrations/20261019173629_sitelift_audits_payments.sql", import.meta.url), "utf8");
+  const tokens = await readFile(new URL("../supabase/migrations/20261022042651_sitelift_payment_download_tokens.sql", import.meta.url), "utf8");
+  const processing = await readFile(new URL("../supabase/migrations/20261022044046_sitelift_payment_processing_claim.sql", import.meta.url), "utf8");
+  const statusFix = await readFile(new URL("../supabase/migrations/20261024141053_sitelift_payment_status_fix.sql", import.meta.url), "utf8");
+  const activeCheckoutIndex = await readFile(new URL("../supabase/migrations/202610250001_sitelift_active_checkout_unique_index.sql", import.meta.url), "utf8");
+
+  assert.match(initial, /status text not null default 'pending' check \(status in \('pending','initialization_failed','paid'\)\)/);
+  assert.match(tokens, /download_token text/);
+  assert.match(tokens, /token_expires_at timestamptz/);
+  assert.match(processing, /processing_started_at timestamptz/);
+  assert.match(statusFix, /'initialization_unknown'/);
+  assert.match(activeCheckoutIndex, /audit_payments_one_active_checkout_per_audit_idx/);
 });

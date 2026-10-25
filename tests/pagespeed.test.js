@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { isPublicWebUrl } from "../api/pagespeed.js";
+import { clientIp, isPublicWebUrl } from "../api/pagespeed.js";
 
 test("accepts public HTTP and HTTPS domain URLs", () => {
   assert.equal(isPublicWebUrl("https://example.com/"), true);
@@ -34,4 +34,17 @@ test("rejects embedded credentials, unexpected ports, and oversized URLs", () =>
   assert.equal(isPublicWebUrl("https://user:pass@example.com/"), false);
   assert.equal(isPublicWebUrl("https://example.com:8443/"), false);
   assert.equal(isPublicWebUrl("https://example.com/" + "a".repeat(2050)), false);
+});
+
+
+test("rate-limit identity ignores caller-controlled forwarded-for values", () => {
+  assert.equal(clientIp({
+    headers: { "x-real-ip": "203.0.113.12", "x-forwarded-for": "198.51.100.1, 198.51.100.2" },
+    socket: { remoteAddress: "127.0.0.1" }
+  }), "203.0.113.12");
+  assert.equal(clientIp({
+    headers: { "x-forwarded-for": "198.51.100.1, 198.51.100.2" },
+    socket: { remoteAddress: "203.0.113.44" }
+  }), "203.0.113.44");
+  assert.equal(clientIp({ headers: {}, socket: {} }), "unknown");
 });
