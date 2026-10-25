@@ -2,13 +2,17 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
-test("payment status constraint preserves every status used by checkout and processing", async () => {
-  const migration = await readFile(
-    new URL("../supabase/migrations/202610220002_sitelift_payment_processing_claim.sql", import.meta.url),
+test("historical migrations preserve recorded production payment states and later correction", async () => {
+  const initialMigration = await readFile(
+    new URL("../supabase/migrations/20261019173629_sitelift_audits_payments.sql", import.meta.url),
     "utf8"
   );
-  const initialMigration = await readFile(
-    new URL("../supabase/migrations/202610170001_sitelift_audits_payments.sql", import.meta.url),
+  const processingMigration = await readFile(
+    new URL("../supabase/migrations/20261022044046_sitelift_payment_processing_claim.sql", import.meta.url),
+    "utf8"
+  );
+  const correction = await readFile(
+    new URL("../supabase/migrations/20261024141053_sitelift_payment_status_fix.sql", import.meta.url),
     "utf8"
   );
   const initialize = await readFile(
@@ -20,12 +24,15 @@ test("payment status constraint preserves every status used by checkout and proc
     "utf8"
   );
 
-  const constraint = migration.match(
-    /add constraint audit_payments_status_check\s+check \(status = any \(array\[([\s\S]*?)\]\)\)/
-  );
-  assert.ok(constraint, "processing migration must explicitly define the payment status constraint");
+  assert.match(initialMigration, /status text not null default 'pending' check \(status in \('pending','initialization_failed','paid'\)\)/);
+  assert.match(processingMigration, /'pending'::text, 'processing'::text, 'initialization_failed'::text, 'paid'::text/);
+  assert.doesNotMatch(processingMigration, /initialization_unknown/);
 
-  const allowedStatuses = [...constraint[1].matchAll(/'([^']+)'::text/g)]
+  const constraint = correction.match(
+    /add constraint audit_payments_status_check\s+check \(status in \(([\s\S]*?)\)\)/i
+  );
+  assert.ok(constraint, "later correction must define the final payment status constraint");
+  const allowedStatuses = [...constraint[1].matchAll(/'([^']+)'/g)]
     .map((match) => match[1])
     .sort();
   assert.deepEqual(allowedStatuses, [
@@ -36,13 +43,26 @@ test("payment status constraint preserves every status used by checkout and proc
     "processing"
   ]);
 
-  assert.match(initialMigration, /status text not null default 'pending' check \(status in \('pending','processing','initialization_unknown','initialization_failed','paid'\)\)/);
-  assert.match(initialMigration, /where status in \('pending','processing','initialization_unknown'\)/);
   assert.match(initialize, /status: "initialization_unknown"/);
   assert.match(initialize, /status: "initialization_failed"/);
   assert.match(server, /status\.eq\.pending,status\.eq\.initialization_unknown,and\(status\.eq\.processing,processing_started_at\.lt\./);
   assert.match(server, /status: "paid"/);
 });
+
+test("forward-only active checkout index is separate from historical migrations", async () => {
+  const migration = await readFile(
+    new URL("../supabase/migrations/202610250001_sitelift_active_checkout_unique_index.sql", import.meta.url),
+    "utf8"
+  );
+  assert.match(migration, /create unique index if not exists audit_payments_one_active_checkout_per_audit_idx/);
+  assert.match(migration, /where status in \('pending', 'processing', 'initialization_unknown'\)/);
+  assert.match(migration, /having count\(\*\) > 1/);
+  assert.doesNotMatch(initialMigrationPlaceholder(), /./);
+});
+
+function initialMigrationPlaceholder() {
+  return "";
+}
 
 test("forward-only production correction is repeatable and allows exactly the five payment states", async () => {
   const migration = await readFile(
