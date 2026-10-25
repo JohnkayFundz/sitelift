@@ -111,7 +111,11 @@ function idempotencyKey(req, input) {
     email: input.email,
     websiteUrl: input.websiteUrl,
     auditId: input.auditId,
-    source: input.source
+    source: input.source,
+    businessName: input.businessName,
+    phone: input.phone,
+    businessType: input.businessType,
+    landingPage: input.landingPage
   });
   return createHash("sha256").update("body:").update(stable).digest("hex");
 }
@@ -153,7 +157,10 @@ export function createLeadCaptureHandler({
       source = optionalText(body.source, 80, "source") || "website_audit";
       if (!/^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/.test(source)) throw new Error("invalid_source");
       landingPage = safeLandingPage(body.landingPage);
-      key = idempotencyKey(req, { email, websiteUrl: website.toString(), auditId, source });
+      key = idempotencyKey(req, {
+        email, websiteUrl: website.toString(), auditId, source,
+        businessName, phone, businessType, landingPage
+      });
     } catch (error) {
       const message = String(error?.message || "");
       const field = message.startsWith("invalid_") ? message.slice(8).replaceAll("_", " ") : "request";
@@ -204,7 +211,7 @@ export function createLeadCaptureHandler({
         p_idempotency_key: key
       });
       if (error) {
-        if (error.code === "23505" || /idempotency_conflict/i.test(String(error.message || ""))) {
+        if (/idempotency_conflict/i.test(String(error.message || ""))) {
           return json(res, 409, { error: "This Idempotency-Key was already used for a different submission." });
         }
         throw new Error("lead_persistence_failed");
