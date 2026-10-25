@@ -59,4 +59,4 @@ Do not expose service-role or Resend keys through Vite `VITE_*` variables. Apply
 
 ## Scheduled worker invocation
 
-Vercel Cron is configured to call `GET /api/cron/deliver-checklists` every five minutes. Set a high-entropy `CRON_SECRET` in the Vercel environment before enabling the deployment. The route requires the exact `Authorization: Bearer <CRON_SECRET>` header, processes at most ten jobs per invocation, and returns aggregate status counts only. If `CRON_SECRET` is missing, it returns `503`; invalid credentials return `401`. Do not expose this secret in frontend variables or logs.
+Vercel Cron is configured to call `GET /api/cron/deliver-checklists` every five minutes. Set a high-entropy `CRON_SECRET` in the Vercel environment before enabling the deployment. The route requires the exact `Authorization: Bearer <CRON_SECRET>` header, processes at most three jobs per invocation, and returns aggregate status counts only. If `CRON_SECRET` is missing, it returns `503`; invalid credentials return `401`. Do not expose this secret in frontend variables or logs.
