@@ -110,7 +110,7 @@ test("checkout initialization locks an unknown provider outcome and tells retrie
   const correction = await readFile(new URL("../supabase/migrations/20261024141053_sitelift_payment_status_fix.sql", import.meta.url), "utf8");
   assert.match(correction, /'initialization_unknown'/);
   const indexMigration = await readFile(new URL("../supabase/migrations/202610250001_sitelift_active_checkout_unique_index.sql", import.meta.url), "utf8");
-  assert.match(indexMigration, /where status in \\('pending', 'processing', 'initialization_unknown'\\)/);
+  assert.match(indexMigration, /where status in \('pending', 'processing', 'initialization_unknown'\)/);
 });
 
 test("checkout initialization uses a shared five-attempt sliding window and fails closed without configuration", async () => {
@@ -123,7 +123,7 @@ test("checkout initialization uses a shared five-attempt sliding window and fail
 test("payment migration enforces a single pending or processing checkout per audit", async () => {
   const indexMigration = await readFile(new URL("../supabase/migrations/202610250001_sitelift_active_checkout_unique_index.sql", import.meta.url), "utf8");
   assert.match(indexMigration, /create unique index if not exists audit_payments_one_active_checkout_per_audit_idx/);
-  assert.match(indexMigration, /on public\\.audit_payments \\(audit_id\\) where status in \\('pending', 'processing', 'initialization_unknown'\\)/);
+  assert.match(indexMigration, /on public\.audit_payments \(audit_id\) where status in \('pending', 'processing', 'initialization_unknown'\)/);
 });
 
 test("Vercel config defines exactly one CSP policy and permits Paystack checkout form submission", async () => {
