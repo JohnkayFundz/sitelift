@@ -26,6 +26,9 @@ test("webhook processing claims a payment atomically and acknowledges in-progres
   assert.match(server, /status\.eq\.pending,status\.eq\.initialization_unknown,and\(status\.eq\.processing,processing_started_at\.lt\./);
   assert.match(server, /\.eq\("status", "processing"\)\.eq\("processing_started_at", nowIso\)/);
   assert.match(webhook, /result\.status === "processing"[\s\S]*?json\(res, 200,[\s\S]*?duplicate: true/);
+  const app = await readFile(new URL("../src/App.jsx", import.meta.url), "utf8");
+  assert.match(app, /recoveryTimer = window\.setTimeout[\s\S]*?\}, 185000\)/);
+  assert.match(app, /clearTimeout\(recoveryTimer\)/);
 });
 
 test("expired tokens have a distinct reason and the recovery endpoint only emails the stored checkout address", async () => {
