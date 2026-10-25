@@ -45,6 +45,10 @@
     {
       "path": "/api/cron/deliver-checklists",
       "schedule": "0 9 * * *"
+    },
+    {
+      "path": "/api/cron/sync-crm",
+      "schedule": "15 9 * * *"
     }
   ]
 }
