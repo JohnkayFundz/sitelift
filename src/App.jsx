@@ -683,6 +683,11 @@ function App() {
           <span><strong>SiteLift</strong><small>by JohnKay Fundz</small></span>
         </a>
         <p>Practical website improvement for growing businesses.</p>
+        <nav className="footer-resources" aria-label="Free website guides">
+          <a href="/website-speed-test.html">Website speed test guide</a>
+          <a href="/website-seo-checker.html">Website SEO checker guide</a>
+          <a href="/website-audit-checklist.html">Small business audit checklist</a>
+        </nav>
         <a href="#home">Back to top ↑</a>
       </footer>
     </div>
