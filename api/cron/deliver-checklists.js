@@ -31,7 +31,7 @@ export function createDeliveryCronHandler({ processJobs = processPendingChecklis
       return json(res, 401, { error: "Unauthorized." });
     }
     try {
-      const results = await processJobs({ limit: 10 });
+      const results = await processJobs({ limit: 3 });
       const summary = results.reduce((acc, result) => {
         const status = ["sent", "retryable", "failed", "lost_claim"].includes(result.status)
           ? result.status : "other";
