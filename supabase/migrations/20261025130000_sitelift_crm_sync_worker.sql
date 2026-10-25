@@ -40,11 +40,13 @@ begin
     where status = 'processing'
       and claimed_at < now() - interval '10 minutes'
       and attempt_count >= 5
+      and destination = 'johnkay_client_engine'
       and (p_job_id is null or id = p_job_id);
 
   select j.id into candidate_id
     from public.sitelift_crm_sync j
-    where (p_job_id is null or j.id = p_job_id)
+    where j.destination = 'johnkay_client_engine'
+      and (p_job_id is null or j.id = p_job_id)
       and j.attempt_count < 5
       and (
         (j.status in ('pending', 'retryable')
@@ -97,7 +99,7 @@ begin
     set status = p_status,
         next_attempt_at = case when p_status = 'retryable' then p_next_attempt_at else null end,
         last_error_code = case when p_status = 'synced' then null else left(coalesce(p_error_code, 'crm_sync_failed'), 80) end,
-        external_record_id = case when p_status = 'synced' then nullif(left(coalesce(p_external_record_id, ''), 200), '') else external_record_id end,
+        external_record_id = case when p_status = 'synced' and p_external_record_id is not null then left(p_external_record_id, 200) else external_record_id end,
         claimed_at = null,
         claim_token = null,
         updated_at = now()
