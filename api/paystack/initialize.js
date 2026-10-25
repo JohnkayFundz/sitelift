@@ -94,6 +94,7 @@ export function createPaystackInitializeHandler({
       const origin = process.env.APP_BASE_URL || "https://sitelift.vercel.app";
       const callback = new URL("/audit/" + auditId, origin);
       callback.searchParams.set("payment", "return");
+      callback.searchParams.set("reference", reference);
       callback.searchParams.set("token", downloadToken);
       let upstream;
       try {
