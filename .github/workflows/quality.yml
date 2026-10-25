@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - feature/sitelift-conversion-hardening
+      - feature/sitelift-lead-capture
       - production-readiness-hardening
   pull_request:
     branches:
