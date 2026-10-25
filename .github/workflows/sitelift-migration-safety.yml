@@ -1,6 +1,12 @@
 name: SiteLift migration safety test
 
 on:
+  push:
+    branches:
+      - review/sitelift-active-checkout-index
+    paths:
+      - "supabase/migrations/202610250001_sitelift_active_checkout_unique_index.sql"
+      - ".github/workflows/sitelift-migration-safety.yml"
   pull_request:
     paths:
       - "supabase/migrations/202610250001_sitelift_active_checkout_unique_index.sql"
