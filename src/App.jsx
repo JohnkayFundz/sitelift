@@ -123,7 +123,7 @@ function App() {
     const reference = params.get("reference") || params.get("trxref");
     const token = params.get("token");
     if (params.get("payment") !== "return" || !reference || !token) return;
-    let cancelled = false, attempts = 0;
+    let cancelled = false, attempts = 0, recoveryTimer;
 
     const showExpiredToken = () => {
       if (cancelled) return;
@@ -177,13 +177,26 @@ function App() {
     (async () => {
       try {
         const complete = await verifyForDownload();
-        if (!complete && !cancelled) checkReadOnlyStatus();
+        if (!complete && !cancelled) {
+          checkReadOnlyStatus();
+          // Processing claims become reclaimable after three minutes. Schedule
+          // one token-authorized POST retry after that window so a crashed
+          // worker can be recovered without making the GET status endpoint write.
+          recoveryTimer = window.setTimeout(async () => {
+            try {
+              const recovered = await verifyForDownload();
+              if (!recovered && !cancelled) checkReadOnlyStatus();
+            } catch {
+              if (!cancelled) checkReadOnlyStatus();
+            }
+          }, 185000);
+        }
       } catch {
         if (!cancelled) checkReadOnlyStatus();
       }
     })();
 
-    return () => { cancelled = true; };
+    return () => { cancelled = true; window.clearTimeout(recoveryTimer); };
   }, []);
   const requestFreshDownloadLink = async () => {
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(paymentEmail.trim())) {
