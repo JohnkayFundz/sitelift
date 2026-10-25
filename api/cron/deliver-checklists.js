@@ -14,7 +14,7 @@ function authorized(authorization) {
 }
 
 /**
- * Vercel Cron invokes this route with GET and an Authorization: Bearer CRON_SECRET
+ * A trusted scheduler may invoke this route with GET and an Authorization: Bearer CRON_SECRET
  * header. Keep the endpoint private; never return provider or database error text.
  * @param {{ processJobs?: typeof processPendingChecklistDeliveries }} [dependencies]
  */
