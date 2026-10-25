@@ -446,7 +446,7 @@ function paymentProcessingHarness({
     }
 
     const staleMatch = orFilter.match(
-      /processing_started_at\.lt\.(.+)$/
+      /processing_started_at\.lt\.([^,)]+)/
     );
 
     return (
