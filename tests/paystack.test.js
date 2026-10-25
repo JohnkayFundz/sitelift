@@ -850,11 +850,15 @@ test("stale worker cannot overwrite a newer worker's completed payment", async (
   };
 
   const h = paymentProcessingHarness();
+  let pdfCalls = 0;
 
   const runPayment = () =>
     processVerifiedPaystackPayment(reference, {
       supabaseAdmin: () => h.db,
-      createAuditPdf: () => Buffer.from("%PDF-test")
+      createAuditPdf: () => {
+        pdfCalls += 1;
+        return Buffer.from("%PDF-test");
+      }
     });
 
   try {
@@ -911,8 +915,17 @@ test("stale worker cannot overwrite a newer worker's completed payment", async (
       "the stale worker's completion should be rejected"
     );
 
-    // Both workers may upload before the database completion guard rejects A.
-    assert.equal(h.uploadCalls, 2);
+    // Baseline: both workers generate and upload before A's completion is rejected.
+    assert.equal(
+      pdfCalls,
+      2,
+      "baseline: the stale worker still generates a PDF after B completes"
+    );
+    assert.equal(
+      h.uploadCalls,
+      2,
+      "baseline: the stale worker still attempts a PDF upload after B completes"
+    );
   } finally {
     releaseA();
     releaseB();
