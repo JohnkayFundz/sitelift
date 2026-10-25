@@ -40,5 +40,11 @@
       "source": "/audit/:id",
       "destination": "/index.html"
     }
+  ],
+  "crons": [
+    {
+      "path": "/api/cron/deliver-checklists",
+      "schedule": "*/5 * * * *"
+    }
   ]
 }
