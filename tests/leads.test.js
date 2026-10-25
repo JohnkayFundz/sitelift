@@ -119,7 +119,7 @@ test("malformed URLs, IP literals, loopback and metadata endpoints are rejected"
 
 test("audit ID must correlate to target or final audited hostname", async () => {
   const h = handlerHarness(), res = response();
-  await h.handler(req({ ...input, websiteUrl: "https://evil.example/" }), res);
+  await h.handler(req({ ...input, websiteUrl: "https://evil.com/" }), res);
   assert.equal(res.statusCode, 400);
   assert.match(res.body.error, /match the website recorded/);
   assert.equal(h.calls.some(call => call[0] === "rpc"), false);
