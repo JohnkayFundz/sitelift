@@ -17,9 +17,13 @@ function getSupabase() {
   assertSupabaseEnvironmentSafe({ supabaseUrl: url });
   return createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
 }
-function clientIp(req) {
-  const forwarded = req.headers?.["x-forwarded-for"];
-  return (Array.isArray(forwarded) ? forwarded[0] : forwarded || req.socket?.remoteAddress || "unknown").split(",")[0].trim().slice(0, 100);
+export function clientIp(req) {
+  // On Vercel, prefer the platform-provided single-client IP header. Do not
+  // trust the first x-forwarded-for value: callers may supply that header and
+  // rotate spoofed values to evade per-IP rate limits.
+  const platformIp = req.headers?.["x-real-ip"];
+  if (typeof platformIp === "string" && platformIp.trim()) return platformIp.trim().slice(0, 100);
+  return String(req.socket?.remoteAddress || "unknown").slice(0, 100);
 }
 
 function send(res, status, body) {
