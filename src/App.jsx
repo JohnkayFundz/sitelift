@@ -129,7 +129,7 @@ function App() {
       if (cancelled) return;
       setRecoveryVisible(true);
       setRecoveryReference(reference);
-      setPaymentMessage("Your 24-hour download link has expired. Enter the email address used at checkout and your payment reference to receive a fresh secure link.");
+      setPaymentMessage("Your 48-hour download link has expired. Enter the email address used at checkout and your payment reference to receive a fresh secure link.");
     };
 
     const verifyForDownload = async () => {
