@@ -722,11 +722,15 @@ test("stale worker cannot reset a newer worker's processing claim", async () => 
   };
 
   const h = paymentProcessingHarness();
+  let pdfCalls = 0;
 
   const runPayment = () =>
     processVerifiedPaystackPayment(reference, {
       supabaseAdmin: () => h.db,
-      createAuditPdf: () => Buffer.from("%PDF-test")
+      createAuditPdf: () => {
+        pdfCalls += 1;
+        return Buffer.from("%PDF-test");
+      }
     });
 
   const originalError = console.error;
@@ -749,23 +753,13 @@ test("stale worker cannot reset a newer worker's processing claim", async () => 
     releaseA();
     const resultA = await workerA;
 
-    assert.deepEqual(resultA, { status: "pending" });
+    assert.deepEqual(resultA, {
+      status: "processing",
+      duplicate: true
+    });
     assert.equal(h.payment.status, "processing");
     assert.equal(h.payment.processing_started_at, timestampB);
-
-    assert.ok(
-      h.rejectedUpdates.some(
-        attempt =>
-          attempt.values.status === "pending" &&
-          attempt.values.processing_started_at === null &&
-          attempt.filters.some(
-            ([key, value]) =>
-              key === "processing_started_at" &&
-              value === timestampA
-          )
-      ),
-      "the stale worker's reset should be rejected"
-    );
+    assert.equal(pdfCalls, 0, "the stale worker must stop before PDF generation");
 
     releaseB();
     const resultB = await workerB;
@@ -773,6 +767,7 @@ test("stale worker cannot reset a newer worker's processing claim", async () => 
     assert.equal(resultB.status, "paid");
     assert.equal(h.payment.status, "paid");
     assert.equal(h.payment.processing_started_at, null);
+    assert.equal(pdfCalls, 1, "only the current owner should generate a PDF");
   } finally {
     releaseA();
     releaseB();
@@ -915,16 +910,15 @@ test("stale worker cannot overwrite a newer worker's completed payment", async (
       "the stale worker's completion should be rejected"
     );
 
-    // Baseline: both workers generate and upload before A's completion is rejected.
     assert.equal(
       pdfCalls,
-      2,
-      "baseline: the stale worker still generates a PDF after B completes"
+      1,
+      "the stale worker must not generate a PDF after B completes"
     );
     assert.equal(
       h.uploadCalls,
-      2,
-      "baseline: the stale worker still attempts a PDF upload after B completes"
+      1,
+      "the stale worker must not attempt a PDF upload after B completes"
     );
   } finally {
     releaseA();
