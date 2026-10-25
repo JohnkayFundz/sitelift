@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-  <url>
-    <loc>https://sitelift.vercel.app/</loc>
-  </url>
+  <url><loc>https://sitelift.vercel.app/</loc></url>
+  <url><loc>https://sitelift.vercel.app/website-speed-test.html</loc></url>
+  <url><loc>https://sitelift.vercel.app/website-seo-checker.html</loc></url>
+  <url><loc>https://sitelift.vercel.app/website-audit-checklist.html</loc></url>
 </urlset>
