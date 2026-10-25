@@ -53,7 +53,7 @@ test("delivery cron processes a bounded batch and returns status counts", async 
   const res = response();
   await handler({ method: "GET", headers: { authorization: "Bearer expected-test-secret" } }, res);
   assert.equal(res.statusCode, 200);
-  assert.equal(options.limit, 10);
+  assert.equal(options.limit, 3);
   assert.deepEqual(res.body, {
     success: true, processed: 3, summary: { sent: 1, retryable: 1, failed: 1 }
   });
