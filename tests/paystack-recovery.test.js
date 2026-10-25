@@ -25,7 +25,12 @@ test("authorized recovery retry returns no link while processing and only signs 
       assert.equal(table, "audit_payments");
       return {
         select() { selectCalls += 1; return this; },
-        eq() { return this; },
+        eq(column, value) {
+          if (column === "reference") assert.equal(value, reference);
+          else if (column === "download_token") assert.equal(value, token);
+          else assert.fail(`Unexpected payment query filter: ${column}`);
+          return this;
+        },
         maybeSingle: async () => {
           // The first lookup per request authorizes the stored checkout token.
           // The final lookup occurs only after reconciliation reports "paid".
