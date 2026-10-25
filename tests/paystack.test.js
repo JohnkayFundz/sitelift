@@ -897,7 +897,7 @@ test("stale worker cannot overwrite a newer worker's completed payment", async (
     );
     assert.equal(h.payment.pdf_path, pdfPathB);
 
-    assert.ok(
+    assert.equal(
       h.rejectedUpdates.some(
         attempt =>
           attempt.values.status === "paid" &&
@@ -907,7 +907,8 @@ test("stale worker cannot overwrite a newer worker's completed payment", async (
               value === timestampA
           )
       ),
-      "the stale worker's completion should be rejected"
+      false,
+      "the stale worker should stop before attempting payment completion"
     );
 
     assert.equal(
