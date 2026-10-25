@@ -27,12 +27,11 @@ test("authorized recovery retry returns no link while processing and only signs 
         select() { selectCalls += 1; return this; },
         eq() { return this; },
         maybeSingle: async () => {
-          // Each request authorizes against the stored checkout token.
-          // Only a completed processor result triggers the second lookup.
-          const lookupWithinRequest = selectCalls;
-          if (lookupWithinRequest === 1 || lookupWithinRequest === 3) {
+          // The first lookup per request authorizes the stored checkout token.
+          // The final lookup occurs only after reconciliation reports "paid".
+          if (selectCalls <= 2) {
             return {
-              data: { status: "processing", token_expires_at: "2099-01-01T00:00:00.000Z" },
+              data: { status: "pending", token_expires_at: "2099-01-01T00:00:00.000Z" },
               error: null
             };
           }
