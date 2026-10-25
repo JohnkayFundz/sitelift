@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import "./App.css";
 
 const checklist = [
@@ -80,12 +80,169 @@ const checklist = [
 ];
 
 function App() {
-  const [website, setWebsite] = useState("");
+  const [website, setWebsite] = useState(() => new URLSearchParams(window.location.search).get("url") || "");
   const [auditMessage, setAuditMessage] = useState("");
   const [auditResult, setAuditResult] = useState(null);
   const [auditLoading, setAuditLoading] = useState(false);
-  const [strategy, setStrategy] = useState("mobile");
-  const [checkedItems, setCheckedItems] = useState([]);
+  const [paymentEmail, setPaymentEmail] = useState("");
+  const [paymentMessage, setPaymentMessage] = useState("");
+  const [paymentLoading, setPaymentLoading] = useState(false);
+  const [downloadUrl, setDownloadUrl] = useState("");
+  const [recoveryVisible, setRecoveryVisible] = useState(false);
+  const [recoveryReference, setRecoveryReference] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get("reference") || params.get("trxref") || "";
+  });
+  const [recoverySending, setRecoverySending] = useState(false);
+  const [strategy, setStrategy] = useState(() => new URLSearchParams(window.location.search).get("strategy") === "desktop" ? "desktop" : "mobile");
+  const [checkedItems, setCheckedItems] = useState(() => {
+    try {
+      const value = JSON.parse(localStorage.getItem("sitelift-checklist-v1") || "[]");
+      return Array.isArray(value) ? value.filter((id) => typeof id === "string" && /^\d+-\d+$/.test(id)) : [];
+    } catch { return []; }
+  });
+  const [darkMode, setDarkMode] = useState(() => {
+    try { return localStorage.getItem("sitelift-theme") === "dark"; } catch { return false; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem("sitelift-checklist-v1", JSON.stringify(checkedItems)); } catch { /* storage may be unavailable */ }
+  }, [checkedItems]);
+  useEffect(() => {
+    const id = window.location.pathname.startsWith("/audit/") ? window.location.pathname.slice(7) : "";
+    if (!/^[0-9a-f-]{36}$/i.test(id)) return;
+    let cancelled = false;
+    fetch("/api/audit/" + id).then(async (response) => {
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || "Unable to load this report.");
+      if (!cancelled) { setWebsite(payload.finalUrl || payload.url || ""); setStrategy(payload.strategy || "mobile"); setAuditResult(payload); }
+    }).catch((error) => { if (!cancelled) setAuditMessage(error.message || "Unable to load this report."); });
+    return () => { cancelled = true; };
+  }, []);
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const reference = params.get("reference") || params.get("trxref");
+    const token = params.get("token");
+    if (params.get("payment") !== "return" || !reference || !token) return;
+    let cancelled = false, attempts = 0;
+
+    const showExpiredToken = () => {
+      if (cancelled) return;
+      setRecoveryVisible(true);
+      setRecoveryReference(reference);
+      setPaymentMessage("Your 24-hour download link has expired. Enter the email address used at checkout and your payment reference to receive a fresh secure link.");
+    };
+
+    const verifyForDownload = async () => {
+      const response = await fetch("/api/paystack/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reference, token })
+      });
+      const result = await response.json().catch(() => ({}));
+      if (response.status === 403 && result.reason === "expired_token") {
+        showExpiredToken();
+        return true;
+      }
+      if (result.status === "paid" && result.downloadUrl) {
+        if (!cancelled) {
+          setDownloadUrl(result.downloadUrl);
+          setPaymentMessage("Payment confirmed. Your secure download link expires in one hour.");
+        }
+        return true;
+      }
+      return false;
+    };
+
+    const checkReadOnlyStatus = async () => {
+      attempts += 1;
+      try {
+        const response = await fetch("/api/paystack/status?reference=" + encodeURIComponent(reference) + "&token=" + encodeURIComponent(token));
+        const result = await response.json().catch(() => ({}));
+        if (response.status === 403 && result.reason === "expired_token") {
+          showExpiredToken();
+          return;
+        }
+        if (result.status === "paid" && result.downloadReady) {
+          const complete = await verifyForDownload();
+          if (complete || cancelled) return;
+        }
+        if (!cancelled && attempts < 12) window.setTimeout(checkReadOnlyStatus, 2500);
+        else if (!cancelled) setPaymentMessage("Payment is still processing. Refresh this page in a moment to check again.");
+      } catch {
+        if (!cancelled && attempts < 12) window.setTimeout(checkReadOnlyStatus, 2500);
+        else if (!cancelled) setPaymentMessage("Unable to check payment status right now. Please refresh in a moment.");
+      }
+    };
+
+    (async () => {
+      try {
+        const complete = await verifyForDownload();
+        if (!complete && !cancelled) checkReadOnlyStatus();
+      } catch {
+        if (!cancelled) checkReadOnlyStatus();
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, []);
+  const requestFreshDownloadLink = async () => {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(paymentEmail.trim())) {
+      setPaymentMessage("Enter the email address used at checkout.");
+      return;
+    }
+    if (!/^sitelift_[0-9a-f-]{36}_[a-f0-9]{32}$/i.test(recoveryReference.trim())) {
+      setPaymentMessage("Enter the payment reference from your Paystack receipt.");
+      return;
+    }
+    setRecoverySending(true);
+    setPaymentMessage("");
+    try {
+      const response = await fetch("/api/paystack/resend-link", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reference: recoveryReference.trim(), email: paymentEmail.trim() })
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || "Secure link recovery is temporarily unavailable.");
+      setPaymentMessage(result.message || "If the reference and email match a paid record, a fresh download link has been sent to your email.");
+    } catch (error) {
+      setPaymentMessage(error.message || "Secure link recovery is temporarily unavailable. Please try again later.");
+    } finally {
+      setRecoverySending(false);
+    }
+  };
+
+  const buyPdfReport = async () => {
+    if (!auditResult?.auditId) { setPaymentMessage("Run an audit first to create a report."); return; }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(paymentEmail)) { setPaymentMessage("Enter a valid email address for your receipt."); return; }
+    setPaymentLoading(true); setPaymentMessage("");
+    try {
+      const response = await fetch("/api/paystack/initialize", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ auditId: auditResult.auditId, email: paymentEmail })
+      });
+      const result = await response.json();
+      if (!response.ok || !result.authorizationUrl) throw new Error(result.error || "Unable to start checkout.");
+      window.location.assign(result.authorizationUrl);
+    } catch (error) { setPaymentMessage(error.message || "Unable to start checkout."); }
+    finally { setPaymentLoading(false); }
+  };
+  useEffect(() => {
+    try { localStorage.setItem("sitelift-theme", darkMode ? "dark" : "light"); } catch { /* storage may be unavailable */ }
+    document.documentElement.dataset.theme = darkMode ? "dark" : "light";
+    const meta = document.querySelector('meta[name="description"]');
+    document.title = auditResult ? "SiteLift audit — " + new URL(auditResult.finalUrl || auditResult.url).hostname : "SiteLift — Free Website Audit & Improvement Checklist";
+    if (meta && auditResult) meta.content = "Lighthouse report for " + (auditResult.finalUrl || auditResult.url) + ". Review performance, accessibility, best practices, SEO, and prioritized improvements.";
+    document.getElementById("sitelift-jsonld")?.remove();
+    const schema = document.createElement("script");
+    schema.id = "sitelift-jsonld";
+    schema.type = "application/ld+json";
+    schema.textContent = JSON.stringify([
+      { "@context": "https://schema.org", "@type": "WebSite", name: "SiteLift", url: "https://sitelift.vercel.app/" },
+      { "@context": "https://schema.org", "@type": "SoftwareApplication", name: "SiteLift Website Audit", applicationCategory: "WebApplication", operatingSystem: "Any", offers: { "@type": "Offer", price: "0", priceCurrency: "NGN" }, url: "https://sitelift.vercel.app/" }
+    ]);
+    document.head.appendChild(schema);
+  }, [checkedItems, darkMode, auditResult]);
 
   const totalItems = checklist.reduce(
     (total, group) => total + group.items.length,
@@ -135,6 +292,7 @@ function App() {
         throw new Error(payload.error || "The audit could not be completed. Please try again shortly.");
       }
       setAuditResult(payload);
+      if (payload.auditId) window.history.replaceState({}, "", "/audit/" + payload.auditId);
       setAuditMessage("Audit complete. These scores come from Google's Lighthouse test for the selected device.");
     } catch (error) {
       setAuditMessage(error.message || "The audit could not be completed. Please try again.");
@@ -152,7 +310,7 @@ function App() {
   }
 
   return (
-    <div className="site-shell">
+    <div className={darkMode ? "site-shell theme-dark" : "site-shell"}>
       <header className="topbar">
         <a className="brand" href="#home" aria-label="SiteLift home">
           <span className="brand-mark">S</span>
@@ -165,6 +323,7 @@ function App() {
         <nav className="navigation" aria-label="Main navigation">
           <a href="#how-it-works">How it works</a>
           <a href="#checklist">Free checklist</a>
+          <button className="theme-toggle" type="button" onClick={() => setDarkMode((value) => !value)}>{darkMode ? "☀ Light" : "☾ Dark"}</button>
           <a className="nav-cta" href="#checker">Check my website ↗</a>
         </nav>
       </header>
@@ -340,6 +499,27 @@ function App() {
                     <p>Send this website address to JohnKay Fundz to discuss practical next steps.</p>
                   </div>
                   <a className="button button-primary" href={`https://wa.me/2348188840165?text=${encodeURIComponent(`Hi JohnKay, I ran a SiteLift audit for ${auditResult.finalUrl || auditResult.url} and would like help improving it.`)}`} target="_blank" rel="noreferrer">Discuss improvements ↗</a>
+                  <div className="paid-report-box">
+                    <h4>Download the full unbranded PDF report</h4>
+                    <p>One-time payment: ₦2,500. Includes your scores, metrics and prioritized recommendations.</p>
+                    {!downloadUrl && <label className="report-email-label">Email for payment receipt
+                      <input type="email" autoComplete="email" value={paymentEmail} onChange={(event) => setPaymentEmail(event.target.value)} placeholder="you@example.com" />
+                    </label>}
+                    {!downloadUrl && !recoveryVisible && <button className="button button-secondary" type="button" disabled={paymentLoading || !auditResult.auditId} onClick={buyPdfReport}>{paymentLoading ? "Connecting to Paystack…" : "Pay ₦2,500 and get PDF"}</button>}
+                    {recoveryVisible && !downloadUrl && (
+                      <div className="download-recovery-form">
+                        <label className="report-email-label">Payment reference
+                          <input type="text" autoComplete="off" value={recoveryReference} onChange={(event) => setRecoveryReference(event.target.value)} placeholder="sitelift_…" />
+                        </label>
+                        <button className="button button-secondary" type="button" disabled={recoverySending} onClick={requestFreshDownloadLink}>
+                          {recoverySending ? "Requesting secure link…" : "Email me a fresh secure link"}
+                        </button>
+                        <small>The link is sent only to the email address recorded at checkout. It is never displayed on this page.</small>
+                      </div>
+                    )}
+                    {downloadUrl && <a className="button button-primary" href={downloadUrl} rel="noreferrer">Download secure PDF ↗</a>}
+                    {paymentMessage && <p role="status">{paymentMessage}</p>}
+                  </div>
                 </div>
                 <p className="checklist-disclaimer">These results reflect an automated Lighthouse lab test, not a guarantee of search ranking or real-world user experience. Google may return no field data for low-traffic websites.</p>
               </section>
@@ -411,7 +591,7 @@ function App() {
               <h2>The 50-point website checklist</h2>
               <p>
                 Review your website one item at a time. Your progress is
-                tracked while this page remains open.
+                saved locally on this device and remains available after refresh.
               </p>
             </div>
             <div className="progress-card">

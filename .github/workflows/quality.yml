@@ -1,10 +1,16 @@
 name: Quality checks
 
 on:
-  pull_request:
-    branches: [main]
   push:
-    branches: [main, production-readiness-hardening]
+    branches:
+      - main
+      - feature/sitelift-conversion-hardening
+      - production-readiness-hardening
+  pull_request:
+    branches:
+      - main
+      - feature/sitelift-conversion-hardening
+      - production-readiness-hardening
 
 permissions:
   contents: read

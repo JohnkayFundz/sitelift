@@ -1,7 +1,26 @@
-const WINDOW_MS = 60_000;
-const MAX_REQUESTS_PER_WINDOW = 4;
-const MAX_TRACKED_CLIENTS = 10_000;
-const requestCounts = new Map();
+import { Ratelimit } from "@upstash/ratelimit";
+import { Redis } from "@upstash/redis";
+import { createClient } from "@supabase/supabase-js";
+import { assertSupabaseEnvironmentSafe } from "./_lib/environment.js";
+
+let limiter;
+function getLimiter() {
+  if (limiter) return limiter;
+  if (!process.env.UPSTASH_REDIS_REST_URL || !process.env.UPSTASH_REDIS_REST_TOKEN) throw new Error("Rate limiter configuration is missing");
+  limiter = new Ratelimit({ redis: Redis.fromEnv(), limiter: Ratelimit.slidingWindow(5, "10 m"), analytics: true, prefix: "sitelift:pagespeed" });
+  return limiter;
+}
+function getSupabase() {
+  const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) throw new Error("Supabase server configuration is missing");
+  assertSupabaseEnvironmentSafe({ supabaseUrl: url });
+  return createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
+}
+function clientIp(req) {
+  const forwarded = req.headers?.["x-forwarded-for"];
+  return (Array.isArray(forwarded) ? forwarded[0] : forwarded || req.socket?.remoteAddress || "unknown").split(",")[0].trim().slice(0, 100);
+}
 
 function send(res, status, body) {
   res.status(status);
@@ -29,37 +48,13 @@ export function isPublicWebUrl(value) {
       host.endsWith(".test") || host.endsWith(".invalid") ||
       host.endsWith(".example")) return false;
   if (!host.includes(".") || host.startsWith(".") || host.endsWith(".")) return false;
+  // Reject IP literals entirely; this endpoint only needs public DNS hostnames.
   if (/^[0-9.]+$/.test(host) || host.includes(":")) return false;
+  if (host.split(".").some((label) => !label || label.length > 63 ||
+      !/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/i.test(label))) return false;
   if (parsed.port && !["80", "443"].includes(parsed.port)) return false;
   if (host === "metadata.google.internal" || host === "metadata") return false;
 
-  return true;
-}
-
-function allowRequest(req) {
-  const forwarded = req.headers?.["x-forwarded-for"];
-  const client = (Array.isArray(forwarded)
-    ? forwarded[0]
-    : forwarded || req.headers?.["x-real-ip"] || req.socket?.remoteAddress || "unknown")
-    .split(",")[0].trim();
-  const now = Date.now();
-
-  for (const [key, entry] of requestCounts) {
-    if (entry.resetAt <= now) requestCounts.delete(key);
-  }
-
-  if (!requestCounts.has(client) && requestCounts.size >= MAX_TRACKED_CLIENTS) {
-    return false;
-  }
-
-  const entry = requestCounts.get(client);
-  if (!entry || entry.resetAt <= now) {
-    requestCounts.set(client, { count: 1, resetAt: now + WINDOW_MS });
-    return true;
-  }
-  if (entry.count >= MAX_REQUESTS_PER_WINDOW) return false;
-
-  entry.count += 1;
   return true;
 }
 
@@ -71,11 +66,28 @@ export default async function handler(req, res) {
     return send(res, 405, { error: "Use POST to run a website audit." });
   }
 
-  if (!allowRequest(req)) {
-    res.setHeader("Retry-After", "60");
-    return send(res, 429, {
-      error: "Too many audits from this connection. Please wait one minute and try again."
+  try {
+    // Fail closed before consuming rate-limit or Google PageSpeed quota when Preview
+    // is configured to use the production Supabase project.
+    assertSupabaseEnvironmentSafe();
+  } catch (error) {
+    console.error("SiteLift audit environment is unsafe", error?.message);
+    return send(res, 503, {
+      error: "The audit service is unavailable in this Preview environment until an isolated database is configured."
     });
+  }
+
+  let rate;
+  try { rate = await getLimiter().limit(clientIp(req)); }
+  catch (error) {
+    console.error("SiteLift rate limiter unavailable", error?.message);
+    return send(res, 503, { error: "The audit service is temporarily unavailable. Please try again shortly." });
+  }
+  res.setHeader("RateLimit-Limit", String(rate.limit));
+  res.setHeader("RateLimit-Remaining", String(rate.remaining));
+  if (!rate.success) {
+    res.setHeader("Retry-After", String(Math.max(1, Math.ceil((rate.reset - Date.now()) / 1000))));
+    return send(res, 429, { error: "Audit limit reached. Please try again in a few minutes." });
   }
 
   const body = req.body && typeof req.body === "object" && !Array.isArray(req.body)
@@ -118,9 +130,9 @@ export default async function handler(req, res) {
 
     if (!upstream.ok) {
       if (upstream.status === 429) {
-        res.setHeader("Retry-After", "60");
+        res.setHeader("Retry-After", "600");
         return send(res, 429, {
-          error: "Google's PageSpeed service is temporarily rate-limited. Please wait a little and retry."
+          error: "Google's PageSpeed service is temporarily rate-limited. Please wait ten minutes and retry."
         });
       }
       if ([400, 403].includes(upstream.status)) {
@@ -207,15 +219,17 @@ export default async function handler(req, res) {
         return item;
       });
 
-    return send(res, 200, {
-      url,
-      finalUrl: lighthouse.finalDisplayedUrl || lighthouse.finalUrl || url,
-      strategy,
-      fetchedAt: new Date().toISOString(),
-      scores,
-      metrics,
-      opportunities
-    });
+    const report = { url, finalUrl: lighthouse.finalDisplayedUrl || lighthouse.finalUrl || url, strategy, fetchedAt: new Date().toISOString(), scores, metrics, opportunities };
+    let saved;
+    try {
+      const { data, error } = await getSupabase().from("audits").insert({ target_url: report.url, final_url: report.finalUrl, strategy: report.strategy, report, created_at: report.fetchedAt }).select("id").single();
+      if (error) throw error;
+      saved = data;
+    } catch (error) {
+      console.error("SiteLift audit persistence failed", error?.message);
+      return send(res, 503, { error: "The audit completed but could not be saved. Please retry shortly." });
+    }
+    return send(res, 200, { ...report, auditId: saved.id, reportUrl: "/audit/" + saved.id });
   } catch (error) {
     if (error?.name === "AbortError") {
       return send(res, 504, { error: "Google's audit took too long to respond. Please try again." });

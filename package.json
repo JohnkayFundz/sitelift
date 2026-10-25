@@ -12,7 +12,10 @@
   },
   "dependencies": {
     "react": "^19.2.8",
-    "react-dom": "^19.2.8"
+    "react-dom": "^19.2.8",
+    "@supabase/supabase-js": "^2.57.0",
+    "@upstash/ratelimit": "^2.0.6",
+    "@upstash/redis": "^1.35.6"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
