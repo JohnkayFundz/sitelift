@@ -59,6 +59,7 @@ function retryDelay(attemptCount) {
 function classifyFailure(error) {
   if (error?.name === "AbortError" || error?.name === "TimeoutError") return { retryable: true, code: "resend_timeout" };
   if (error?.status === 429) return { retryable: true, code: "resend_rate_limited" };
+  if ([408, 425].includes(error?.status)) return { retryable: true, code: "resend_transient_http_error" };
   if (typeof error?.status === "number" && error.status >= 500) return { retryable: true, code: "resend_server_error" };
   if (typeof error?.status === "number" && error.status >= 400) return { retryable: false, code: "resend_rejected" };
   return { retryable: true, code: "resend_network_error" };
