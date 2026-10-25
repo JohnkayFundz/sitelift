@@ -119,6 +119,10 @@ begin
         and l.website_url = p_website_url
         and l.audit_id = p_audit_id
         and l.source = p_source
+        and l.business_name is not distinct from p_business_name
+        and l.phone is not distinct from p_phone
+        and l.business_type is not distinct from p_business_type
+        and l.landing_page is not distinct from p_landing_page
     ) then
       raise exception using errcode = '23505', message = 'idempotency_conflict';
     end if;
