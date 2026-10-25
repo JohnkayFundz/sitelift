@@ -50,19 +50,19 @@ test("historical migrations preserve recorded production payment states and late
 });
 
 test("forward-only active checkout index is separate from historical migrations", async () => {
+  const initialMigration = await readFile(
+    new URL("../supabase/migrations/20261019173629_sitelift_audits_payments.sql", import.meta.url),
+    "utf8"
+  );
   const migration = await readFile(
     new URL("../supabase/migrations/202610250001_sitelift_active_checkout_unique_index.sql", import.meta.url),
     "utf8"
   );
+  assert.doesNotMatch(initialMigration, /audit_payments_one_active_checkout_per_audit_idx/);
   assert.match(migration, /create unique index if not exists audit_payments_one_active_checkout_per_audit_idx/);
   assert.match(migration, /where status in \('pending', 'processing', 'initialization_unknown'\)/);
   assert.match(migration, /having count\(\*\) > 1/);
-  assert.doesNotMatch(initialMigrationPlaceholder(), /./);
 });
-
-function initialMigrationPlaceholder() {
-  return "";
-}
 
 test("forward-only production correction is repeatable and allows exactly the five payment states", async () => {
   const migration = await readFile(
