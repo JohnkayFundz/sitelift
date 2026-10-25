@@ -105,6 +105,19 @@ export async function processVerifiedPaystackPayment(reference, dependencies = {
       throw new Error("Verified Paystack transaction does not match the pending payment");
     }
 
+    // Re-check ownership after the external verification call. A reclaimed or
+    // completed payment must not trigger avoidable PDF generation or upload.
+    const { data: currentClaim, error: ownershipError } = await db.from("audit_payments")
+      .select("status,processing_started_at")
+      .eq("id", payment.id).maybeSingle();
+    if (ownershipError) throw ownershipError;
+    if (
+      currentClaim?.status !== "processing" ||
+      currentClaim.processing_started_at !== nowIso
+    ) {
+      return { status: "processing", duplicate: true };
+    }
+
     const { data: audit, error: auditError } = await db.from("audits")
       .select("id,target_url,final_url,strategy,report,created_at")
       .eq("id", payment.audit_id).single();
