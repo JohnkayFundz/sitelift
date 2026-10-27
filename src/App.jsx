@@ -545,6 +545,9 @@ function App() {
                     {!downloadUrl && <label className="report-email-label">Email for payment receipt
                       <input type="email" autoComplete="email" value={paymentEmail} onChange={(event) => setPaymentEmail(event.target.value)} placeholder="you@example.com" />
                     </label>}
+                    {!downloadUrl && <label className="report-email-label">WhatsApp number with country code
+                      <input type="tel" autoComplete="tel" inputMode="tel" value={paymentWhatsapp} onChange={(event) => setPaymentWhatsapp(event.target.value)} placeholder="+2348012345678" required />
+                    </label>}
                     {!downloadUrl && !recoveryVisible && <button className="button button-secondary" type="button" disabled={paymentLoading || !auditResult.auditId} onClick={buyPdfReport}>{paymentLoading ? "Connecting to Paystack…" : "Pay ₦2,500 and get PDF"}</button>}
                     {recoveryVisible && !downloadUrl && (
                       <div className="download-recovery-form">
