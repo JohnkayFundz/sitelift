@@ -648,7 +648,7 @@ function App() {
           <div className="pricing-card">
             <div><span className="pricing-label">CUSTOM WEBSITE LIFT PACKAGE</span><h3>Professional Speed &amp; Conversion Overhaul</h3><p>Prioritized performance fixes, mobile UX improvements, clearer calls to action, and practical implementation notes tailored to your website.</p></div>
             <div className="pricing-price"><strong>₦50,000</strong><small>starting price · per website</small><a className="button button-primary" href={"https://wa.me/2348188840165?text=" + encodeURIComponent("Hi JohnKay, I would like to discuss the SiteLift Website Lift Package for " + (auditResult?.finalUrl || auditResult?.url || website || "my website") + ".")} target="_blank" rel="noreferrer">Discuss my plan ↗</a></div>
-            <form className="plan-lead-form" onSubmit={submitOptimizationLead}
+            <form className="plan-lead-form" onSubmit={submitOptimizationLead}>
               <label>Email<input type="email" autoComplete="email" value={leadEmail} onChange={(event) => setLeadEmail(event.target.value)} placeholder="you@business.com" required /></label>
               <label>WhatsApp number<input type="tel" inputMode="tel" autoComplete="tel" value={leadWhatsapp} onChange={(event) => setLeadWhatsapp(event.target.value)} placeholder="+2348012345678" required /></label>
               <button className="button button-secondary" type="submit" disabled={leadSubmitting || !auditResult?.auditId}>{leadSubmitting ? "Saving your request…" : "Request my custom plan ↗"}</button>
