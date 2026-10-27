@@ -102,7 +102,7 @@ function App() {
     } catch { return []; }
   });
   const [darkMode, setDarkMode] = useState(() => {
-    try { return localStorage.getItem("sitelift-theme") === "dark"; } catch { return false; }
+    try { return localStorage.getItem("sitelift-theme") !== "light"; } catch { return false; }
   });
   useEffect(() => {
     try { localStorage.setItem("sitelift-checklist-v1", JSON.stringify(checkedItems)); } catch { /* storage may be unavailable */ }
@@ -337,13 +337,11 @@ function App() {
             </div>
 
             <h1>
-              Turn your website into a <span>better business tool.</span>
+              Turn Slow Mobile Websites into <span>Paying Clients.</span>
             </h1>
 
             <p className="hero-description">
-              Find opportunities to improve your website experience,
-              search visibility, performance, and customer enquiries.
-              Start with practical guidance, not confusing technical jargon.
+              Find the mobile speed, usability and conversion issues that can cost your business enquiries. Get a real Lighthouse report, clear next steps, and a practical route to a better-performing website.
             </p>
 
             <div className="hero-actions">
