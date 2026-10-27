@@ -42,7 +42,7 @@ test("checkout initialization rate limit rejects excess attempts before database
       method: "POST",
       headers: { "x-real-ip": "203.0.113.10" },
       socket: { remoteAddress: "127.0.0.1" },
-      body: { auditId: "decb676a-e5fb-40eb-9ea6-e983b2a4840b", email: "customer@example.com" }
+      body: { auditId: "decb676a-e5fb-40eb-9ea6-e983b2a4840b", email: "customer@example.com", whatsapp: "+2348012345678" }
     }, res);
     assert.equal(res.statusCode, 429);
     assert.equal(res.headers["Retry-After"], "600");
@@ -92,7 +92,7 @@ test("checkout initialization rejects an existing active payment before calling 
     await handler({
       method: "POST",
       headers: { "x-real-ip": "203.0.113.10" },
-      body: { auditId: "decb676a-e5fb-40eb-9ea6-e983b2a4840b", email: "customer@example.com" }
+      body: { auditId: "decb676a-e5fb-40eb-9ea6-e983b2a4840b", email: "customer@example.com", whatsapp: "+2348012345678" }
     }, res);
     assert.equal(res.statusCode, 409);
     assert.equal(providerCalls, 0);
@@ -131,4 +131,23 @@ test("Vercel config defines exactly one CSP policy and permits Paystack checkout
     .filter((header) => header.key.toLowerCase() === "content-security-policy");
   assert.equal(policies.length, 1);
   assert.match(policies[0].value, /form-action 'self' https:\/\/checkout\.paystack\.com/);
+});
+
+test("checkout rejects missing or malformed WhatsApp contact before database access", async () => {
+  const previousSecret = process.env.PAYSTACK_SECRET_KEY;
+  process.env.PAYSTACK_SECRET_KEY = "unit-test-paystack-secret";
+  let limiterCalls = 0;
+  const handler = createPaystackInitializeHandler({
+    createRateLimiter: () => ({ limit: async () => { limiterCalls += 1; return { success: true }; } }),
+    getSupabaseAdmin: () => { throw new Error("Invalid contacts must not access the database"); }
+  });
+  const res = response();
+  try {
+    await handler({ method: "POST", headers: {}, body: { auditId: "decb676a-e5fb-40eb-9ea6-e983b2a4840b", email: "customer@example.com" } }, res);
+    assert.equal(res.statusCode, 400);
+    assert.equal(limiterCalls, 0);
+  } finally {
+    if (previousSecret === undefined) delete process.env.PAYSTACK_SECRET_KEY;
+    else process.env.PAYSTACK_SECRET_KEY = previousSecret;
+  }
 });
