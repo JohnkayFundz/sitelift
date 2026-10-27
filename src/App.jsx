@@ -346,15 +346,15 @@ function App() {
       setLeadMessage("Run a free audit first so we can attach your request to the correct report.");
       return;
     }
-    const normalizedWhatsapp = leadWhatsapp.replace(/[\\s().-]/g, "");
-    if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(leadEmail.trim()) || !/^\\+?[1-9]\\d{7,14}$/.test(normalizedWhatsapp)) {
+    const normalizedWhatsapp = leadWhatsapp.replace(/[\s().-]/g, "");
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(leadEmail.trim()) || !/^\+?[1-9]\d{7,14}$/.test(normalizedWhatsapp)) {
       setLeadMessage("Enter a valid email and WhatsApp number with country code.");
       return;
     }
     let websiteUrl;
     try {
       const rawWebsite = auditResult.finalUrl || auditResult.url || website;
-      websiteUrl = new URL(/^https?:\\/\\//i.test(rawWebsite) ? rawWebsite : "https://" + rawWebsite).href;
+      websiteUrl = new URL(/^https?:\/\//i.test(rawWebsite) ? rawWebsite : "https://" + rawWebsite).href;
     } catch {
       setLeadMessage("We could not validate the audited website. Run the audit again and retry.");
       return;
