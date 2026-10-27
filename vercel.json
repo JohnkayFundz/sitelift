@@ -33,9 +33,22 @@
           "value": "public, max-age=31536000, immutable"
         }
       ]
+    },
+    {
+      "source": "/og-sitelift.svg",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=86400, stale-while-revalidate=604800"
+        }
+      ]
     }
   ],
   "rewrites": [
+    {
+      "source": "/report/:id",
+      "destination": "/api/report/:id"
+    },
     {
       "source": "/audit/:id",
       "destination": "/index.html"
