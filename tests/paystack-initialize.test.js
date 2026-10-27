@@ -151,3 +151,12 @@ test("checkout rejects missing or malformed WhatsApp contact before database acc
     else process.env.PAYSTACK_SECRET_KEY = previousSecret;
   }
 });
+
+test("paid report checkout stores the validated WhatsApp contact and callback reference", async () => {
+  const source = await readFile(new URL("../api/paystack/initialize.js", import.meta.url), "utf8");
+  const migration = await readFile(new URL("../supabase/migrations/202610270001_sitelift_customer_whatsapp.sql", import.meta.url), "utf8");
+  assert.match(source, /customer_whatsapp: whatsapp\.replace/);
+  assert.match(source, /callback\.searchParams\.set\("reference", reference\)/);
+  assert.match(source, /customer_whatsapp: whatsapp\.replace/);
+  assert.match(migration, /add column if not exists customer_whatsapp text/);
+});
