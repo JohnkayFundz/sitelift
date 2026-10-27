@@ -1,3 +1,4 @@
+import process from "node:process";
 import { readdir, readFile } from "node:fs/promises";
 import { gzipSync } from "node:zlib";
 
