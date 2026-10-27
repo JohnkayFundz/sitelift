@@ -79,12 +79,27 @@ const checklist = [
   }
 ];
 
+function getWebsiteValidation(value) {
+  if (!value.trim()) return { valid: false, message: "" };
+  try {
+    const normalized = /^https?:\/\//i.test(value.trim()) ? value.trim() : "https://" + value.trim();
+    const url = new URL(normalized);
+    const host = url.hostname.toLowerCase();
+    const valid = ["http:", "https:"].includes(url.protocol) && host.includes(".") && !host.startsWith(".") && !host.endsWith(".") && !url.username && !url.password && host !== "localhost" && !host.endsWith(".local") && !host.endsWith(".internal") && (!url.port || ["80", "443"].includes(url.port));
+    return valid ? { valid: true, message: "Website address looks valid. We will run a real Lighthouse test." } : { valid: false, message: "Enter a public website address, such as example.com." };
+  } catch { return { valid: false, message: "Enter a public website address, such as example.com." }; }
+}
+
 function App() {
   const [website, setWebsite] = useState(() => new URLSearchParams(window.location.search).get("url") || "");
   const [auditMessage, setAuditMessage] = useState("");
   const [auditResult, setAuditResult] = useState(null);
   const [auditLoading, setAuditLoading] = useState(false);
   const [paymentEmail, setPaymentEmail] = useState("");
+  const [paymentWhatsapp, setPaymentWhatsapp] = useState("");
+  const [leadEmail, setLeadEmail] = useState("");
+  const [leadWhatsapp, setLeadWhatsapp] = useState("");
+  const [leadMessage, setLeadMessage] = useState("");
   const [paymentMessage, setPaymentMessage] = useState("");
   const [paymentLoading, setPaymentLoading] = useState(false);
   const [downloadUrl, setDownloadUrl] = useState("");
@@ -214,12 +229,14 @@ function App() {
 
   const buyPdfReport = async () => {
     if (!auditResult?.auditId) { setPaymentMessage("Run an audit first to create a report."); return; }
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(paymentEmail)) { setPaymentMessage("Enter a valid email address for your receipt."); return; }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(paymentEmail.trim())) { setPaymentMessage("Enter a valid email address for your receipt."); return; }
+    const normalizedWhatsapp = paymentWhatsapp.replace(/[\s().-]/g, "");
+    if (!/^\+?[1-9]\d{7,14}$/.test(normalizedWhatsapp)) { setPaymentMessage("Enter a WhatsApp number with country code, for example +2348012345678."); return; }
     setPaymentLoading(true); setPaymentMessage("");
     try {
       const response = await fetch("/api/paystack/initialize", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ auditId: auditResult.auditId, email: paymentEmail })
+        body: JSON.stringify({ auditId: auditResult.auditId, email: paymentEmail.trim(), whatsapp: normalizedWhatsapp })
       });
       const result = await response.json();
       if (!response.ok || !result.authorizationUrl) throw new Error(result.error || "Unable to start checkout.");
@@ -231,7 +248,15 @@ function App() {
     try { localStorage.setItem("sitelift-theme", darkMode ? "dark" : "light"); } catch { /* storage may be unavailable */ }
     document.documentElement.dataset.theme = darkMode ? "dark" : "light";
     const meta = document.querySelector('meta[name="description"]');
-    document.title = auditResult ? "SiteLift audit — " + new URL(auditResult.finalUrl || auditResult.url).hostname : "SiteLift — Free Website Audit & Improvement Checklist";
+    document.title = auditResult ? "SiteLift audit — " + new URL(auditResult.finalUrl || auditResult.url).hostname : "SiteLift — Free Mobile Speed Checker Nigeria";
+    const canonical = document.querySelector('link[rel="canonical"]');
+    if (canonical) canonical.href = auditResult?.auditId ? window.location.origin + "/report/" + auditResult.auditId : "https://sitelift.vercel.app/";
+    const ogTitle = document.querySelector('meta[property="og:title"]');
+    const ogDescription = document.querySelector('meta[property="og:description"]');
+    const ogUrl = document.querySelector('meta[property="og:url"]');
+    if (ogTitle) ogTitle.content = document.title;
+    if (ogDescription && auditResult) ogDescription.content = "Real Lighthouse website audit for " + (auditResult.finalUrl || auditResult.url) + ". Open the shareable SiteLift report for scores and recommended improvements.";
+    if (ogUrl) ogUrl.content = auditResult?.auditId ? window.location.origin + "/report/" + auditResult.auditId : "https://sitelift.vercel.app/";
     if (meta && auditResult) meta.content = "Lighthouse report for " + (auditResult.finalUrl || auditResult.url) + ". Review performance, accessibility, best practices, SEO, and prioritized improvements.";
     document.getElementById("sitelift-jsonld")?.remove();
     const schema = document.createElement("script");
@@ -253,6 +278,8 @@ function App() {
     () => Math.round((checkedItems.length / totalItems) * 100),
     [checkedItems.length, totalItems]
   );
+  const websiteValidation = getWebsiteValidation(website);
+  const publicReportUrl = auditResult?.auditId ? window.location.origin + "/report/" + auditResult.auditId : "";
 
   async function handleAuditSubmit(event) {
     event.preventDefault();
@@ -399,6 +426,17 @@ function App() {
               <span className="footer-check">✓</span>
               <span>Understand what to improve and why.</span>
             </div>
+            <div className="micro-metrics" aria-label="What the audit measures">
+              <div><span>⚡</span><strong>PageSpeed score</strong><small>Real Lighthouse data</small></div>
+              <div><span>▣</span><strong>Mobile viewport</strong><small>Mobile-first checks</small></div>
+              <div><span>↗</span><strong>CTA visibility</strong><small>Conversion checklist</small></div>
+            </div>
+            <div className="comparison-preview" aria-label="Illustrative before and improvement direction">
+              <div className="comparison-panel comparison-before"><span>BEFORE</span><strong>Friction for mobile visitors</strong><small>Slow-loading pages · unclear next step</small></div>
+              <div className="comparison-arrow" aria-hidden="true">→</div>
+              <div className="comparison-panel comparison-after"><span>SITELIFT DIRECTION</span><strong>Prioritized improvements</strong><small>Speed fixes · clearer contact CTA</small></div>
+              <p>Illustrative guidance, not a claim that SiteLift has changed the website.</p>
+            </div>
           </div>
         </section>
 
@@ -422,6 +460,7 @@ function App() {
                 autoComplete="url"
                 placeholder="https://yourbusiness.com"
                 value={website}
+                aria-invalid={Boolean(website.trim()) && !websiteValidation.valid}
                 onChange={(event) => {
                   setWebsite(event.target.value);
                   setAuditMessage("");
@@ -437,6 +476,8 @@ function App() {
                 {auditLoading ? "Auditing…" : "Run free audit →"}
               </button>
             </div>
+            <div className="sample-site-row"><span>Try a sample:</span><button type="button" className="sample-site-button" onClick={() => { setWebsite("https://example.com"); setAuditMessage(""); setAuditResult(null); }}>example.com ↗</button></div>
+            {websiteValidation.message && <p className={"url-validation " + (websiteValidation.valid ? "is-valid" : "is-invalid")} aria-live="polite">{websiteValidation.message}</p>}
             {auditMessage && (
               <p className="form-message" role="status">{auditMessage}</p>
             )}
@@ -461,7 +502,7 @@ function App() {
                 <div className="score-grid">
                   {auditResult.scores.map((score) => (
                     <article className="score-card" key={score.key}>
-                      <div className={`score-ring score-${score.rating}`}><strong>{score.value ?? "—"}</strong></div>
+                      <svg className={`score-ring score-${score.rating}`} viewBox="0 0 72 72" role="img" aria-label={`${score.label}: ${score.value ?? "not available"} out of 100`}><circle className="score-ring-track" cx="36" cy="36" r="29" /><circle className="score-ring-value" cx="36" cy="36" r="29" transform="rotate(-90 36 36)" strokeDasharray="182.2" strokeDashoffset={182.2 - (Math.max(0, Math.min(100, Number(score.value) || 0)) / 100) * 182.2} /></svg><strong className="score-number">{score.value ?? "—"}</strong>
                       <h4>{score.label}</h4>
                       <span className={`score-rating rating-${score.rating}`}>{score.ratingLabel}</span>
                     </article>
@@ -497,6 +538,7 @@ function App() {
                     <p>Send this website address to JohnKay Fundz to discuss practical next steps.</p>
                   </div>
                   <a className="button button-primary" href={`https://wa.me/2348188840165?text=${encodeURIComponent(`Hi JohnKay, I ran a SiteLift audit for ${auditResult.finalUrl || auditResult.url} and would like help improving it.`)}`} target="_blank" rel="noreferrer">Discuss improvements ↗</a>
+                  <a className="button button-secondary" href={"https://wa.me/?text=" + encodeURIComponent("SiteLift website audit for " + (auditResult.finalUrl || auditResult.url) + ": " + publicReportUrl)} target="_blank" rel="noreferrer">Send report to owner ↗</a>
                   <div className="paid-report-box">
                     <h4>Download the full unbranded PDF report</h4>
                     <p>One-time payment: ₦2,500. Includes your scores, metrics and prioritized recommendations.</p>
@@ -553,6 +595,21 @@ function App() {
             <div><span>01</span><p><strong>Website improvements</strong><small>Mobile layout, speed, and usability</small></p></div>
             <div><span>02</span><p><strong>Business websites</strong><small>Clear services, trust, and contact options</small></p></div>
             <div><span>03</span><p><strong>Online stores & React apps</strong><small>Practical features built around your goals</small></p></div>
+          </div>
+        </section>
+
+        <section className="pricing-section" id="pricing">
+          <div className="section-heading"><span className="section-kicker">FROM INSIGHT TO IMPACT</span><h2>Get the fixes, not just the score.</h2><p>Transparent starting price. Scope and delivery timing are confirmed before paid work begins.</p></div>
+          <div className="pricing-card">
+            <div><span className="pricing-label">CUSTOM WEBSITE LIFT PACKAGE</span><h3>Professional Speed &amp; Conversion Overhaul</h3><p>Prioritized performance fixes, mobile UX improvements, clearer calls to action, and practical implementation notes tailored to your website.</p></div>
+            <div className="pricing-price"><strong>₦50,000</strong><small>starting price · per website</small><a className="button button-primary" href={"https://wa.me/2348188840165?text=" + encodeURIComponent("Hi JohnKay, I would like to discuss the SiteLift Website Lift Package for " + (auditResult?.finalUrl || auditResult?.url || website || "my website") + ".")} target="_blank" rel="noreferrer">Discuss my plan ↗</a></div>
+            <form className="plan-lead-form" onSubmit={(event) => { event.preventDefault(); const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(leadEmail.trim()); const phone = leadWhatsapp.replace(/[\s().-]/g, ""); if (!emailOk || !/^\+?[1-9]\d{7,14}$/.test(phone)) { setLeadMessage("Enter a valid email and WhatsApp number with country code."); return; } const message = "Hi JohnKay, please prepare a custom SiteLift optimization plan. Website: " + (auditResult?.finalUrl || auditResult?.url || website || "not run yet") + ". Email: " + leadEmail.trim() + ". WhatsApp: " + phone + ". Please confirm scope and price before work."; window.open("https://wa.me/2348188840165?text=" + encodeURIComponent(message), "_blank", "noopener,noreferrer"); }}>
+              <label>Email<input type="email" autoComplete="email" value={leadEmail} onChange={(event) => setLeadEmail(event.target.value)} placeholder="you@business.com" required /></label>
+              <label>WhatsApp number<input type="tel" inputMode="tel" autoComplete="tel" value={leadWhatsapp} onChange={(event) => setLeadWhatsapp(event.target.value)} placeholder="+2348012345678" required /></label>
+              <button className="button button-secondary" type="submit">Unlock my custom plan on WhatsApp ↗</button>
+              {leadMessage && <small role="status">{leadMessage}</small>}
+              <small>Your details are placed in a WhatsApp message for you to review and send; they are not submitted to a separate lead database.</small>
+            </form>
           </div>
         </section>
 
