@@ -37,11 +37,13 @@ export function createPaystackInitializeHandler({
     }
     const secret = process.env.PAYSTACK_SECRET_KEY;
     if (!secret) return json(res, 503, { error: "Paid reports are not configured yet" });
-    const { auditId, email } = req.body || {};
+    const { auditId, email, whatsapp } = req.body || {};
     if (typeof auditId !== "string" || !/^[0-9a-f-]{36}$/i.test(auditId) ||
         typeof email !== "string" || email.length > 254 ||
-        !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      return json(res, 400, { error: "A valid audit ID and email address are required" });
+        !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()) ||
+        typeof whatsapp !== "string" || whatsapp.length > 32 ||
+        !/^\+?[1-9]\d{7,14}$/.test(whatsapp.replace(/[\s().-]/g, ""))) {
+      return json(res, 400, { error: "A valid audit ID, email address, and WhatsApp number with country code are required" });
     }
 
     try {
@@ -83,7 +85,7 @@ export function createPaystackInitializeHandler({
       const downloadToken = randomBytes(32).toString("hex");
       const { data: payment, error: paymentError } = await db.from("audit_payments").insert({
         audit_id: auditId, reference, amount: PRICE_KOBO, currency: "NGN",
-        customer_email: email, status: "pending", download_token: downloadToken,
+        customer_email: email.trim(), customer_whatsapp: whatsapp.replace(/[\s().-]/g, ""), status: "pending", download_token: downloadToken,
         token_expires_at: new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString()
       }).select("id").single();
       if (paymentError?.code === "23505") {
@@ -94,6 +96,7 @@ export function createPaystackInitializeHandler({
       const origin = process.env.APP_BASE_URL || "https://sitelift.vercel.app";
       const callback = new URL("/audit/" + auditId, origin);
       callback.searchParams.set("payment", "return");
+      callback.searchParams.set("reference", reference);
       callback.searchParams.set("token", downloadToken);
       let upstream;
       try {
@@ -103,7 +106,7 @@ export function createPaystackInitializeHandler({
         body: JSON.stringify({
           email, amount: PRICE_KOBO, currency: "NGN", reference,
           callback_url: callback.toString(),
-          metadata: { audit_id: auditId, payment_id: payment.id, product: "unbranded_pdf_audit_report" }
+          metadata: { audit_id: auditId, payment_id: payment.id, customer_whatsapp: whatsapp.replace(/[\s().-]/g, ""), product: "unbranded_pdf_audit_report" }
         }),
           signal: AbortSignal.timeout(15000)
         });
