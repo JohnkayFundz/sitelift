@@ -20,6 +20,12 @@ export function createCrmSyncCronHandler({ processJobs = processPendingCrmSync }
       res.setHeader("Allow", "GET, POST");
       return json(res, 405, { error: "Method not allowed" });
     }
+    // Defense in depth: the route remains inert unless explicitly opted in
+    // after the dedicated BizBoard receiver contract has been implemented
+    // and verified. Missing/false configuration must never claim outbox rows.
+    if (process.env.CRM_SYNC_ENABLED !== "true") {
+      return json(res, 503, { error: "CRM sync is disabled." });
+    }
     if (!process.env.CRON_SECRET) {
       return json(res, 503, { error: "CRM sync worker is not configured." });
     }

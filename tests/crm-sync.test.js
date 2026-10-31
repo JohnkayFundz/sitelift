@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { processCrmSyncJob } from "../api/_lib/crm-sync.js";
+import { processCrmSyncJob, processPendingCrmSync } from "../api/_lib/crm-sync.js";
 import { createCrmSyncCronHandler } from "../api/cron/sync-crm.js";
 
 function response() {
@@ -62,12 +62,45 @@ function workerDb({ job = {}, lead = {}, claimError = null } = {}) {
 }
 
 const configured = {
+  CRM_SYNC_ENABLED: "true",
   CRM_API_URL: "https://crm.example.test/api/integrations/sitelift",
   CRM_API_KEY: "unit-test-crm-key",
   CRON_SECRET: "unit-test-cron-secret"
 };
 
-test("CRM cron fails closed when CRON_SECRET is missing", async () => withEnv({ CRON_SECRET: null }, async () => {
+
+test("CRM sync worker and batch processor are inert unless explicitly enabled", async () => withEnv({
+  CRM_SYNC_ENABLED: null,
+  CRM_API_URL: configured.CRM_API_URL,
+  CRM_API_KEY: configured.CRM_API_KEY
+}, async () => {
+  let databaseAccess = 0;
+  let networkAccess = 0;
+  const getSupabaseAdmin = () => { databaseAccess += 1; throw new Error("database must not be touched"); };
+  const fetchImpl = async () => { networkAccess += 1; throw new Error("network must not be touched"); };
+
+  assert.deepEqual(await processCrmSyncJob(null, { getSupabaseAdmin, fetchImpl }), { status: "disabled" });
+  assert.deepEqual(await processPendingCrmSync({ getSupabaseAdmin, fetchImpl }), []);
+  assert.equal(databaseAccess, 0);
+  assert.equal(networkAccess, 0);
+}));
+
+test("CRM cron remains disabled even with valid credentials unless feature flag is true", async () => withEnv({
+  CRM_SYNC_ENABLED: null,
+  CRON_SECRET: configured.CRON_SECRET,
+  CRM_API_URL: configured.CRM_API_URL,
+  CRM_API_KEY: configured.CRM_API_KEY
+}, async () => {
+  let processed = 0;
+  const handler = createCrmSyncCronHandler({ processJobs: async () => { processed += 1; return []; } });
+  const res = response();
+  await handler({ method: "POST", headers: { authorization: "Bearer " + configured.CRON_SECRET } }, res);
+  assert.equal(res.statusCode, 503);
+  assert.deepEqual(res.body, { error: "CRM sync is disabled." });
+  assert.equal(processed, 0);
+}));
+
+test("CRM cron fails closed when CRON_SECRET is missing", async () => withEnv({ ...configured, CRON_SECRET: null }, async () => {
   let processed = 0;
   const handler = createCrmSyncCronHandler({ processJobs: async () => { processed += 1; return []; } });
   const res = response();

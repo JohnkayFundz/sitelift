@@ -6,6 +6,29 @@ const MAX_DELAY_MS = 6 * 60 * 60 * 1000;
 const REQUEST_TIMEOUT_MS = 10_000;
 const CRM_DESTINATION = "johnkay_client_engine";
 
+/**
+ * CRM ingress isolation is intentional: no outbox job may be claimed or sent
+ * unless CRM_SYNC_ENABLED is explicitly set to the exact string "true".
+ *
+ * BizBoard has no verified SiteLift ingress endpoint. A future receiver must
+ * provide a dedicated server-to-server Bearer credential (not a Supabase user
+ * access token), map lead.businessName -> company, and apply status "New Lead"
+ * when no explicitly agreed status is supplied. It must persist the
+ * Idempotency-Key atomically with lead creation and return the same durable
+ * result for a replay of that key.
+ *
+ * Consent is independent of operational CRM synchronization. Never infer
+ * marketing permission from lead creation or delivery. The current outbound
+ * payload deliberately does not transmit consent; a future versioned contract
+ * must preserve marketingConsent and consentRecordedAt explicitly, default
+ * missing consent to false, and retain the timestamp only for an affirmative
+ * recorded choice. Keep this worker disabled until that receiver contract,
+ * authentication, field mapping, idempotency, and consent behavior are tested.
+ */
+function crmSyncEnabled() {
+  return process.env.CRM_SYNC_ENABLED === "true";
+}
+
 /** @param {number} attemptCount */
 function retryDelay(attemptCount) {
   return Math.min(MAX_DELAY_MS, BASE_DELAY_MS * (2 ** Math.max(0, attemptCount - 1)));
@@ -61,6 +84,9 @@ export async function processCrmSyncJob(outboxId = null, {
   fetchImpl = fetch,
   now = () => new Date()
 } = {}) {
+  // Check before environment validation, database access, or any network work.
+  if (!crmSyncEnabled()) return { status: "disabled" };
+
   const endpoint = process.env.CRM_API_URL;
   const apiKey = process.env.CRM_API_KEY;
   if (!endpoint || !apiKey || !validCrmUrl(endpoint)) {
@@ -152,6 +178,7 @@ export async function processCrmSyncJob(outboxId = null, {
 
 /** Process a bounded batch of due outbox rows. */
 export async function processPendingCrmSync({ limit = 3, getSupabaseAdmin = supabaseAdmin, fetchImpl = fetch, now = () => new Date() } = {}) {
+  if (!crmSyncEnabled()) return [];
   const safeLimit = Math.max(1, Math.min(10, Math.floor(Number(limit) || 3)));
   const results = [];
   for (let index = 0; index < safeLimit; index += 1) {
