@@ -198,3 +198,41 @@ test("CRM cron processes a bounded batch and reports aggregate statuses only", a
   assert.deepEqual(res.body, { success: true, processed: 3,
     summary: { synced: 1, retryable: 1, failed: 1 } });
 }));
+
+test("CRM worker rejects invalid configuration before claiming a job", async () => {
+  const invalidConfigs = [
+    { CRM_API_URL: null, CRM_API_KEY: configured.CRM_API_KEY },
+    { CRM_API_URL: configured.CRM_API_URL, CRM_API_KEY: null },
+    { CRM_API_URL: "http://crm.example.test/api", CRM_API_KEY: configured.CRM_API_KEY },
+    { CRM_API_URL: "https://user:password@crm.example.test/api", CRM_API_KEY: configured.CRM_API_KEY },
+    { CRM_API_URL: "not a URL", CRM_API_KEY: configured.CRM_API_KEY }
+  ];
+
+  for (const config of invalidConfigs) {
+    await withEnv({
+      CRM_SYNC_ENABLED: "true",
+      CRM_API_URL: config.CRM_API_URL,
+      CRM_API_KEY: config.CRM_API_KEY
+    }, async () => {
+      let dbCreated = false;
+      let fetchCalled = false;
+
+      await assert.rejects(
+        processCrmSyncJob(null, {
+          getSupabaseAdmin: () => {
+            dbCreated = true;
+            throw new Error("Database must not be accessed for invalid configuration");
+          },
+          fetchImpl: async () => {
+            fetchCalled = true;
+            throw new Error("Network must not be accessed for invalid configuration");
+          }
+        }),
+        { message: "crm_sync_not_configured" }
+      );
+
+      assert.equal(dbCreated, false, "invalid configuration must be rejected before database access");
+      assert.equal(fetchCalled, false, "invalid configuration must be rejected before network access");
+    });
+  }
+});
