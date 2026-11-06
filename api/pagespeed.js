@@ -10,8 +10,8 @@ function getLimiter() {
   limiter = new Ratelimit({ redis: Redis.fromEnv(), limiter: Ratelimit.slidingWindow(5, "10 m"), analytics: true, prefix: "sitelift:pagespeed" });
   return limiter;
 }
-function getSupabase() {
-  const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+export function getSupabase() {
+  const url = process.env.SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) throw new Error("Supabase server configuration is missing");
   assertSupabaseEnvironmentSafe({ supabaseUrl: url });

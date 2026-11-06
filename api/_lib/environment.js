@@ -3,7 +3,7 @@ const SUPABASE_PROJECT_REF_PATTERN = /^[a-z0-9]{20}$/;
 
 export function assertSupabaseEnvironmentSafe({
   vercelEnv = process.env.VERCEL_ENV,
-  supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL,
+  supabaseUrl = process.env.SUPABASE_URL,
   approvedPreviewProjectRef = process.env.SUPABASE_PREVIEW_PROJECT_REF
 } = {}) {
   // Preserve existing Production and local behavior. The strict allowlist below

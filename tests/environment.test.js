@@ -157,3 +157,48 @@ test("server Supabase client refuses the production project in Vercel Preview be
     }
   }
 });
+
+
+test("server Supabase clients fail closed when only VITE_SUPABASE_URL is configured", async () => {
+  const { supabaseAdmin } = await import("../api/_lib/server.js");
+  const { getSupabase } = await import("../api/pagespeed.js");
+
+  const keys = [
+    "VERCEL_ENV",
+    "SUPABASE_URL",
+    "VITE_SUPABASE_URL",
+    "SUPABASE_SERVICE_ROLE_KEY",
+    "SUPABASE_PREVIEW_PROJECT_REF"
+  ];
+  const previous = Object.fromEntries(
+    keys.map((key) => [key, process.env[key]])
+  );
+
+  try {
+    process.env.VERCEL_ENV = "preview";
+    delete process.env.SUPABASE_URL;
+    process.env.VITE_SUPABASE_URL = stagingUrl;
+    process.env.SUPABASE_SERVICE_ROLE_KEY = "unit-test-not-a-real-key";
+    process.env.SUPABASE_PREVIEW_PROJECT_REF = stagingProjectRef;
+
+    assert.throws(
+      () => supabaseAdmin(),
+      /Missing Supabase server configuration/
+    );
+
+    assert.throws(
+      () => getSupabase(),
+      /Supabase server configuration is missing/
+    );
+
+    assert.throws(
+      () => assertSupabaseEnvironmentSafe({ vercelEnv: "preview" }),
+      /Supabase URL is missing/
+    );
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+});
