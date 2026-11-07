@@ -20,6 +20,14 @@ function authorized(authorization) {
  */
 export function createDeliveryCronHandler({ processJobs = processPendingChecklistDeliveries } = {}) {
   return async function handler(req, res) {
+    // Preview deployments must never claim checklist jobs or send customer email.
+    // Keep this guard first so it runs before auth checks or worker invocation.
+    if (process.env.VERCEL_ENV === "preview") {
+      return json(res, 403, {
+        status: "skipped",
+        error: "Delivery worker is disabled in Preview."
+      });
+    }
     if (req.method !== "GET" && req.method !== "POST") {
       res.setHeader("Allow", "GET, POST");
       return json(res, 405, { error: "Method not allowed" });
