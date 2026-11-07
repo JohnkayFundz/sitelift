@@ -22,6 +22,17 @@ async function withSecret(value, run) {
   }
 }
 
+async function withVercelEnv(value, run) {
+  const old = process.env.VERCEL_ENV;
+  if (value === null) delete process.env.VERCEL_ENV;
+  else process.env.VERCEL_ENV = value;
+  try { await run(); }
+  finally {
+    if (old === undefined) delete process.env.VERCEL_ENV;
+    else process.env.VERCEL_ENV = old;
+  }
+}
+
 test("delivery cron fails closed when CRON_SECRET is not configured", async () => withSecret(null, async () => {
   let calls = 0;
   const handler = createDeliveryCronHandler({ processJobs: async () => { calls += 1; return []; } });
@@ -66,3 +77,48 @@ test("delivery cron allows only GET and POST", async () => withSecret("expected-
   assert.equal(res.statusCode, 405);
   assert.equal(res.headers.Allow, "GET, POST");
 }));
+
+test("Preview blocks checklist delivery before auth or worker execution", async () => withVercelEnv("preview", async () => withSecret("expected-test-secret", async () => {
+  let calls = 0;
+  const handler = createDeliveryCronHandler({
+    processJobs: async () => { calls += 1; throw new Error("Preview worker must remain inert"); }
+  });
+
+  for (const method of ["GET", "POST"]) {
+    const res = response();
+    await handler({ method, headers: { authorization: "Bearer expected-test-secret" } }, res);
+    assert.equal(res.statusCode, 403);
+    assert.deepEqual(res.body, {
+      status: "skipped",
+      error: "Delivery worker is disabled in Preview."
+    });
+  }
+  assert.equal(calls, 0);
+})));
+
+test("Preview guard takes precedence even when cron credentials are absent", async () => withVercelEnv("preview", async () => withSecret(null, async () => {
+  let calls = 0;
+  const handler = createDeliveryCronHandler({ processJobs: async () => { calls += 1; return []; } });
+  const res = response();
+  await handler({ method: "GET", headers: {} }, res);
+  assert.equal(res.statusCode, 403);
+  assert.equal(res.body.status, "skipped");
+  assert.equal(calls, 0);
+})));
+
+test("authorized Production delivery behavior remains enabled", async () => withVercelEnv("production", async () => withSecret("expected-test-secret", async () => {
+  let calls = 0;
+  const handler = createDeliveryCronHandler({
+    processJobs: async options => {
+      calls += 1;
+      assert.equal(options.limit, 3);
+      return [{ status: "sent" }];
+    }
+  });
+  const res = response();
+  await handler({ method: "GET", headers: { authorization: "Bearer expected-test-secret" } }, res);
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.success, true);
+  assert.equal(res.body.processed, 1);
+  assert.equal(calls, 1);
+})));
