@@ -4,6 +4,7 @@ import { createHmac } from "node:crypto";
 import { createPaystackWebhookHandler, validSignature } from "../api/paystack/webhook.js";
 import { createAuditPdf, processVerifiedPaystackPayment } from "../api/_lib/server.js";
 import { createPaymentStatusHandler } from "../api/paystack/status.js";
+import { sha256Hex } from "../api/_lib/report-download.js";
 test("Paystack webhook signature validates the exact raw body", () => {
   const raw = Buffer.from(JSON.stringify({ event: "charge.success", data: { reference: "test-reference" } }));
   const secret = "test-secret-for-unit-tests";
@@ -19,7 +20,7 @@ test("PDF generator emits a minimal PDF document", () => {
   assert.equal(pdf.toString("utf8").endsWith("%%EOF"), true);
 });
 
-test("webhook processing claims a payment atomically and acknowledges in-progress duplicates", async () => {
+test("webhook processing claims payments atomically and frontend retries after stale claim", async () => {
   const { readFile } = await import("node:fs/promises");
   const server = await readFile(new URL("../api/_lib/server.js", import.meta.url), "utf8");
   const webhook = await readFile(new URL("../api/paystack/webhook.js", import.meta.url), "utf8");
@@ -27,23 +28,22 @@ test("webhook processing claims a payment atomically and acknowledges in-progres
   assert.match(server, /\.eq\("status", "processing"\)\.eq\("processing_started_at", nowIso\)/);
   assert.match(webhook, /result\.status === "processing"[\s\S]*?json\(res, 200,[\s\S]*?duplicate: true/);
   const app = await readFile(new URL("../src/App.jsx", import.meta.url), "utf8");
-  assert.match(app, /recoveryTimer = window\.setTimeout[\s\S]*?\}, 185000\)/);
-  assert.match(app, /clearTimeout\(recoveryTimer\)/);
+  assert.match(app, /retryTimer = window\.setTimeout[\s\S]*?\}, 185000\)/);
+  assert.match(app, /clearTimeout\(retryTimer\)/);
 });
-
-test("expired tokens have a distinct reason and the recovery endpoint only emails the stored checkout address", async () => {
+test("recovery uses a body-only one-time code and never places it in an email URL", async () => {
   const { readFile } = await import("node:fs/promises");
   const status = await readFile(new URL("../api/paystack/status.js", import.meta.url), "utf8");
   const recovery = await readFile(new URL("../api/paystack/resend-link.js", import.meta.url), "utf8");
   const app = await readFile(new URL("../src/App.jsx", import.meta.url), "utf8");
   assert.match(status, /reason: "expired_token"/);
-  assert.match(app, /Your secure download link has expired/);
-  assert.ok(app.includes('"/api/paystack/resend-link"'));
+  assert.match(app, /Email me a one-time recovery code/);
+  assert.match(app, /body: JSON\.stringify\(\{ reference: recoveryReference\.trim\(\), recoveryCode:/);
   assert.match(recovery, /to: \[payment\.customer_email\]/);
-  assert.match(recovery, /const GENERIC_MESSAGE = "If the reference and email match a paid record/);
-  assert.doesNotMatch(recovery, /downloadUrl:\s*link\.toString\(\)/);
+  assert.match(recovery, /download_token_hash: sha256Hex\(recoveryCode\)/);
+  assert.doesNotMatch(recovery, /searchParams\.set\("token"/);
+  assert.doesNotMatch(recovery, /https?:\/\//);
 });
-
 test("duplicate charge.success webhook leaves an existing paid record immutable", async () => {
   const reference = "sitelift_decb676a-e5fb-40eb-9ea6-e983b2a4840b_c2ad7387235540f0b4eacd86bcfb87b9";
   const secret = "unit-test-paystack-secret";
@@ -140,54 +140,33 @@ test("duplicate charge.success webhook leaves an existing paid record immutable"
 });
 
 
-test("GET payment status is read-only and never invokes payment reconciliation or signed-link creation", async () => {
+test("GET payment status is read-only and authorizes through the HttpOnly redemption cookie", async () => {
   const reference = "sitelift_decb676a-e5fb-40eb-9ea6-e983b2a4840b_c2ad7387235540f0b4eacd86bcfb87b9";
   const token = "a".repeat(64);
-  let updateCalls = 0;
-  let signedUrlCalls = 0;
-  let selectCalls = 0;
+  let updateCalls = 0, selectCalls = 0, hashFilter = null;
   const query = {
     select() { selectCalls += 1; return this; },
-    eq() { return this; },
-    maybeSingle: async () => ({
-      data: { status: "pending", pdf_path: null, token_expires_at: "2099-01-01T00:00:00.000Z" },
-      error: null
-    }),
+    eq(column, value) { if (column === "download_token_hash") hashFilter = value; return this; },
+    maybeSingle: async () => ({ data: { status: "pending", pdf_path: null, token_expires_at: "2099-01-01T00:00:00.000Z", delivery_blocked: false }, error: null }),
     update() { updateCalls += 1; throw new Error("GET status must not write"); }
   };
-  const db = {
-    from(table) {
-      assert.equal(table, "audit_payments");
-      return query;
-    },
-    storage: {
-      from() {
-        return { createSignedUrl() { signedUrlCalls += 1; throw new Error("GET status must not create signed URLs"); } };
-      }
-    }
-  };
-  const response = {
+  const db = { from(table) { assert.equal(table, "audit_payments"); return query; } };
+  const res = {
     statusCode: null, headers: {}, body: null,
     status(code) { this.statusCode = code; return this; },
     setHeader(name, value) { this.headers[name] = value; },
     json(body) { this.body = body; return this; }
   };
-  const { readFile } = await import("node:fs/promises");
-  const statusSource = await readFile(new URL("../api/paystack/status.js", import.meta.url), "utf8");
-  assert.doesNotMatch(statusSource, /processVerifiedPaystackPayment/);
-  assert.doesNotMatch(statusSource, /createSignedUrl/);
+  const source = await (await import("node:fs/promises")).readFile(new URL("../api/paystack/status.js", import.meta.url), "utf8");
+  assert.doesNotMatch(source, /processVerifiedPaystackPayment|createSignedUrl/);
   const handler = createPaymentStatusHandler({ getSupabaseAdmin: () => db });
-
-  await handler({ method: "GET", query: { reference, token } }, response);
-
-  assert.equal(response.statusCode, 200);
-  assert.deepEqual(response.body, { status: "pending", downloadReady: false, downloadUrl: null });
+  await handler({ method: "GET", query: { reference }, headers: { cookie: "__Secure-sitelift-redemption=" + reference + "." + token } }, res);
+  assert.equal(res.statusCode, 200);
+  assert.deepEqual(res.body, { status: "pending", downloadReady: false });
+  assert.equal(hashFilter, sha256Hex(token));
   assert.equal(selectCalls, 1);
   assert.equal(updateCalls, 0);
-  assert.equal(signedUrlCalls, 0);
 });
-
-
 test("webhook rejects invalid signatures without invoking payment processing", async () => {
   const originalSecret = process.env.PAYSTACK_SECRET_KEY;
   process.env.PAYSTACK_SECRET_KEY = "unit-test-paystack-secret";
@@ -243,94 +222,57 @@ test("webhook acknowledges unrelated events without processing a payment", async
   }
 });
 
-test("explicit payment verification creates a signed download only after token authorization and paid state", async () => {
+test("explicit verification alias redeems a one-time code into a report-bound session", async () => {
   const { createPaystackVerifyHandler } = await import("../api/paystack/verify.js");
   const reference = "sitelift_decb676a-e5fb-40eb-9ea6-e983b2a4840b_c2ad7387235540f0b4eacd86bcfb87b9";
-  const token = "a".repeat(64);
-  const queryResults = [
-    { data: { status: "pending", token_expires_at: "2099-01-01T00:00:00.000Z" }, error: null },
-    { data: { status: "paid", pdf_path: "audit-test-id/report.pdf", download_token: token, token_expires_at: "2099-01-01T00:00:00.000Z" }, error: null }
-  ];
-  let queryIndex = 0;
-  let processCalls = 0;
-  let signedUrlCalls = 0;
-  const db = {
-    from(table) {
-      assert.equal(table, "audit_payments");
-      const result = queryResults[queryIndex++];
-      return {
-        select() { return this; },
-        eq() { return this; },
-        maybeSingle: async () => result
-      };
-    },
-    storage: {
-      from(bucket) {
-        assert.equal(bucket, "audit-reports");
-        return {
-          createSignedUrl: async (path, expiresIn, options) => {
-            signedUrlCalls += 1;
-            assert.equal(path, "audit-test-id/report.pdf");
-            assert.equal(expiresIn, 3600);
-            assert.deepEqual(options, { download: true });
-            return { data: { signedUrl: "https://signed.example/report.pdf" }, error: null };
-          }
-        };
-      }
-    }
-  };
-  const response = {
+  const code = "a".repeat(64);
+  let rpcCalls = 0;
+  const db = { rpc: async (name, args) => {
+    rpcCalls += 1;
+    assert.equal(name, "redeem_report_download");
+    assert.equal(args.p_reference, reference);
+    return { data: [{ audit_id: "decb676a-e5fb-40eb-9ea6-e983b2a4840b" }], error: null };
+  } };
+  const res = {
     statusCode: null, headers: {}, body: null,
     status(code) { this.statusCode = code; return this; },
     setHeader(name, value) { this.headers[name] = value; },
+    getHeader(name) { return this.headers[name]; },
     json(body) { this.body = body; return this; }
   };
   const handler = createPaystackVerifyHandler({
     getSupabaseAdmin: () => db,
-    processPayment: async incomingReference => {
-      processCalls += 1;
-      assert.equal(incomingReference, reference);
-      return { status: "paid" };
-    }
+    processPayment: async () => ({ status: "paid" }),
+    createSessionToken: () => "b".repeat(64)
   });
-
-  await handler({ method: "POST", body: { reference, token } }, response);
-
-  assert.equal(response.statusCode, 200);
-  assert.deepEqual(response.body, {
-    status: "paid",
-    downloadUrl: "https://signed.example/report.pdf",
-    expiresIn: 3600
+  await handler({ method: "POST", body: { reference, recoveryCode: code } }, res);
+  assert.equal(res.statusCode, 200);
+  assert.equal(rpcCalls, 1);
+  assert.deepEqual(res.body, {
+    status: "paid", downloadReady: true,
+    downloadPath: "/api/reports/decb676a-e5fb-40eb-9ea6-e983b2a4840b/download"
   });
-  assert.equal(processCalls, 1);
-  assert.equal(signedUrlCalls, 1);
-  assert.equal(queryIndex, 2);
+  assert.equal("downloadUrl" in res.body, false);
+  assert.equal(res.headers["Set-Cookie"].length, 2);
 });
-
-test("explicit payment verification refuses an invalid token before reconciliation", async () => {
+test("explicit verification rejects invalid recovery code before payment reconciliation", async () => {
   const { createPaystackVerifyHandler } = await import("../api/paystack/verify.js");
-  let processCalls = 0;
-  let dbCalls = 0;
-  const response = {
+  let processCalls = 0, dbCalls = 0;
+  const handler = createPaystackVerifyHandler({
+    getSupabaseAdmin: () => { dbCalls += 1; throw new Error("invalid code must not query"); },
+    processPayment: async () => { processCalls += 1; return { status: "paid" }; }
+  });
+  const res = {
     statusCode: null, headers: {}, body: null,
     status(code) { this.statusCode = code; return this; },
     setHeader(name, value) { this.headers[name] = value; },
     json(body) { this.body = body; return this; }
   };
-  const handler = createPaystackVerifyHandler({
-    getSupabaseAdmin: () => { dbCalls += 1; throw new Error("invalid input must not access DB"); },
-    processPayment: async () => { processCalls += 1; return { status: "paid" }; }
-  });
-
-  await handler({ method: "POST", body: { reference: "invalid", token: "invalid" } }, response);
-
-  assert.equal(response.statusCode, 403);
-  assert.deepEqual(response.body, { error: "A valid download token is required" });
-  assert.equal(dbCalls, 0);
+  await handler({ method: "POST", body: { reference: "sitelift_decb676a-e5fb-40eb-9ea6-e983b2a4840b_c2ad7387235540f0b4eacd86bcfb87b9", recoveryCode: "not-a-code" } }, res);
+  assert.equal(res.statusCode, 403);
   assert.equal(processCalls, 0);
+  assert.equal(dbCalls, 0);
 });
-
-
 test("concurrent webhook delivery sees the real processing claim, and a failed worker can be retried", async () => {
   const originalSecret = process.env.PAYSTACK_SECRET_KEY;
   const originalFetch = globalThis.fetch;
