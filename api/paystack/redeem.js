@@ -33,13 +33,27 @@ export function createReportRedemptionHandler({
     if (!token) return json(res, 403, { error: "A valid one-time recovery code is required" });
 
     try {
+      const db = getSupabaseAdmin();
+      const { data: authorized, error: authorizationError } = await db.from("audit_payments")
+        .select("status,token_expires_at,delivery_blocked")
+        .eq("reference", reference)
+        .eq("download_token_hash", sha256Hex(token))
+        .maybeSingle();
+      if (authorizationError) throw authorizationError;
+      if (!authorized) return json(res, 403, { error: "One-time code is invalid or already used" });
+      if (!authorized.token_expires_at || new Date(authorized.token_expires_at).getTime() <= Date.now()) {
+        return json(res, 403, { error: "One-time code has expired" });
+      }
+      if (authorized.delivery_blocked) {
+        return json(res, 403, { error: "Report delivery is temporarily blocked" });
+      }
+
       const result = await processPayment(reference);
       if (result.status === "not_found") return json(res, 404, { error: "Payment not found" });
       if (result.status !== "paid") {
         return json(res, 200, { status: result.status || "pending", downloadReady: false });
       }
 
-      const db = getSupabaseAdmin();
       const sessionToken = createSessionToken();
       if (typeof sessionToken !== "string" || !TOKEN.test(sessionToken)) {
         throw new Error("Session token generator returned an invalid value");
