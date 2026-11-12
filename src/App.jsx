@@ -122,6 +122,12 @@ function App() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const reference = params.get("reference") || params.get("trxref");
+    if (params.get("payment") === "recovery" && reference) {
+      setRecoveryVisible(true);
+      setRecoveryReference(reference);
+      setPaymentMessage("Enter the checkout email address and request a one-time recovery code for this paid report.");
+      return;
+    }
     if (params.get("payment") !== "return" || !reference) return;
     let cancelled = false, attempts = 0, retryTimer;
 
