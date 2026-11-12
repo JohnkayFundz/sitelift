@@ -16,9 +16,21 @@ alter table public.audit_payments
 -- may still be serving requests. The follow-up contract migration removes the
 -- plaintext column only after the new application is deployed.
 update public.audit_payments
-set download_token_hash = encode(digest(convert_to(download_token, 'UTF8'), 'sha256'), 'hex')
+set download_token_hash = encode(digest(convert_to(download_token, 'UTF8'), 'sha256'), 'hex'),
+    token_expires_at = least(
+      coalesce(token_expires_at, created_at + interval '24 hours'),
+      created_at + interval '24 hours'
+    )
 where download_token is not null
   and download_token_hash is null;
+
+-- Enforce the approved 24-hour ceiling on any already-hashed redemption secret.
+update public.audit_payments
+set token_expires_at = least(
+  coalesce(token_expires_at, created_at + interval '24 hours'),
+  created_at + interval '24 hours'
+)
+where download_token_hash is not null;
 
 create unique index if not exists audit_payments_download_token_hash_uidx
   on public.audit_payments (download_token_hash)
