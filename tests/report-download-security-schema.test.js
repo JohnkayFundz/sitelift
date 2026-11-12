@@ -16,7 +16,7 @@ test("expand migration hashes legacy tokens before the later plaintext-column cl
   assert.match(cleanup, /set download_token = null/i);
   assert.match(cleanup, /drop column if exists download_token/i);
   assert.match(cleanup, /drop index if exists public\.audit_payments_download_token_uidx/i);
-  assert.match(sql, /created_at \\+ interval '24 hours'/i);
+  assert.ok(sql.includes("created_at + interval '24 hours'"));
   assert.equal(createHash("sha256").update("legacy-secret").digest("hex").length, 64);
 });
 test("migration creates report-bound sessions with idle and absolute expiry enforcement", async () => {
