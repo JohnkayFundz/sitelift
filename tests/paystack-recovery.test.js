@@ -13,16 +13,22 @@ const response = () => ({
 });
 
 test("redemption waits while payment is processing and never creates a session", async () => {
-  let dbCalls = 0;
+  let rpcCalls = 0;
+  const db = {
+    from: () => ({ select() { return this; }, eq() { return this; }, maybeSingle: async () => ({
+      data: { status: "processing", token_expires_at: "2099-01-01T00:00:00Z", delivery_blocked: false }, error: null
+    }) }),
+    rpc: async () => { rpcCalls += 1; return { data: null, error: null }; }
+  };
   const handler = createReportRedemptionHandler({
-    getSupabaseAdmin: () => { dbCalls += 1; throw new Error("must not issue session"); },
+    getSupabaseAdmin: () => db,
     processPayment: async () => ({ status: "processing" })
   });
   const res = response();
   await handler({ method: "POST", body: { reference, recoveryCode: token } }, res);
   assert.equal(res.statusCode, 200);
   assert.deepEqual(res.body, { status: "processing", downloadReady: false });
-  assert.equal(dbCalls, 0);
+  assert.equal(rpcCalls, 0);
 });
 
 test("recovery redemption accepts code only in POST body and returns report session path, not signed URL", async () => {
