@@ -27,7 +27,7 @@ test("redemption waits while payment is processing and never creates a session",
 
 test("recovery redemption accepts code only in POST body and returns report session path, not signed URL", async () => {
   let rpcCalls = 0;
-  const db = { rpc: async (name, args) => {
+  const db = { from: () => ({ select() { return this; }, eq() { return this; }, maybeSingle: async () => ({ data: { status: "paid", token_expires_at: "2099-01-01T00:00:00Z", delivery_blocked: false }, error: null }) }), rpc: async (name, args) => {
     rpcCalls += 1;
     assert.equal(name, "redeem_report_download");
     assert.equal(args.p_reference, reference);
