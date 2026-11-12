@@ -65,7 +65,7 @@ create or replace function public.redeem_report_download(
 returns table (audit_id uuid, session_expires_at timestamptz)
 language plpgsql
 security definer
-set search_path = public, pg_temp
+set search_path = pg_catalog, public, pg_temp
 as $$
 declare
   payment_row public.audit_payments%rowtype;
@@ -122,7 +122,7 @@ create or replace function public.authorize_report_download(
 returns table (audit_id uuid, pdf_path text)
 language plpgsql
 security definer
-set search_path = public, pg_temp
+set search_path = pg_catalog, public, pg_temp
 as $$
 declare
   session_row public.audit_download_sessions%rowtype;
@@ -225,7 +225,7 @@ create or replace function public.authorize_report_download(
 returns table (audit_id uuid, pdf_path text)
 language plpgsql
 security definer
-set search_path = public, pg_temp
+set search_path = pg_catalog, public, pg_temp
 as $$
 declare
   session_row public.audit_download_sessions%rowtype;
@@ -327,7 +327,7 @@ create or replace function public.authorize_report_download(
 returns table (audit_id uuid, pdf_path text)
 language plpgsql
 security definer
-set search_path = public, pg_temp
+set search_path = pg_catalog, public, pg_temp
 as $$
 declare
   session_row public.audit_download_sessions%rowtype;
@@ -475,7 +475,7 @@ create or replace function public.authorize_report_download(
 returns table (audit_id uuid, pdf_path text)
 language plpgsql
 security definer
-set search_path = public, pg_temp
+set search_path = pg_catalog, public, pg_temp
 as $$
 declare
   session_row public.audit_download_sessions%rowtype;
@@ -577,7 +577,7 @@ create or replace function public.authorize_report_download(
 returns table (audit_id uuid, pdf_path text)
 language plpgsql
 security definer
-set search_path = public, pg_temp
+set search_path = pg_catalog, public, pg_temp
 as $$
 declare
   session_row public.audit_download_sessions%rowtype;
