@@ -94,6 +94,7 @@ function App() {
     return params.get("reference") || params.get("trxref") || "";
   });
   const [recoverySending, setRecoverySending] = useState(false);
+  const [recoveryCode, setRecoveryCode] = useState("");
   const [strategy, setStrategy] = useState(() => new URLSearchParams(window.location.search).get("strategy") === "desktop" ? "desktop" : "mobile");
   const [checkedItems, setCheckedItems] = useState(() => {
     try {
@@ -121,32 +122,32 @@ function App() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const reference = params.get("reference") || params.get("trxref");
-    const token = params.get("token");
-    if (params.get("payment") !== "return" || !reference || !token) return;
-    let cancelled = false, attempts = 0, recoveryTimer;
+    if (params.get("payment") !== "return" || !reference) return;
+    let cancelled = false, attempts = 0, retryTimer;
 
-    const showExpiredToken = () => {
+    const showRecovery = (message) => {
       if (cancelled) return;
       setRecoveryVisible(true);
       setRecoveryReference(reference);
-      setPaymentMessage("Your secure download link has expired. Enter the email address used at checkout and your payment reference to receive a fresh secure link.");
+      setPaymentMessage(message || "Your one-time checkout session is unavailable. Enter the checkout email and payment reference to receive a fresh recovery code.");
     };
 
-    const verifyForDownload = async () => {
-      const response = await fetch("/api/paystack/verify", {
+    const redeemCheckout = async () => {
+      const response = await fetch("/api/paystack/redeem", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ reference, token })
+        body: JSON.stringify({ reference })
       });
       const result = await response.json().catch(() => ({}));
-      if (response.status === 403 && result.reason === "expired_token") {
-        showExpiredToken();
+      if (response.status === 403) {
+        showRecovery("Your one-time checkout code is invalid, expired, or already used. Request a fresh recovery code below.");
         return true;
       }
-      if (result.status === "paid" && result.downloadUrl) {
+      if (result.status === "paid" && result.downloadReady && result.downloadPath) {
         if (!cancelled) {
-          setDownloadUrl(result.downloadUrl);
-          setPaymentMessage("Payment confirmed. Your secure download link expires in one hour.");
+          setDownloadUrl(result.downloadPath);
+          setRecoveryVisible(false);
+          setPaymentMessage("Payment confirmed. Your private report session is ready.");
         }
         return true;
       }
@@ -156,14 +157,14 @@ function App() {
     const checkReadOnlyStatus = async () => {
       attempts += 1;
       try {
-        const response = await fetch("/api/paystack/status?reference=" + encodeURIComponent(reference) + "&token=" + encodeURIComponent(token));
+        const response = await fetch("/api/paystack/status?reference=" + encodeURIComponent(reference));
         const result = await response.json().catch(() => ({}));
-        if (response.status === 403 && result.reason === "expired_token") {
-          showExpiredToken();
+        if (response.status === 403) {
+          showRecovery("Your checkout session has expired or is unavailable. Request a fresh one-time recovery code.");
           return;
         }
         if (result.status === "paid" && result.downloadReady) {
-          const complete = await verifyForDownload();
+          const complete = await redeemCheckout();
           if (complete || cancelled) return;
         }
         if (!cancelled && attempts < 12) window.setTimeout(checkReadOnlyStatus, 2500);
@@ -176,15 +177,14 @@ function App() {
 
     (async () => {
       try {
-        const complete = await verifyForDownload();
+        const complete = await redeemCheckout();
         if (!complete && !cancelled) {
           checkReadOnlyStatus();
-          // Processing claims become reclaimable after three minutes. Schedule
-          // one token-authorized POST retry after that window so a crashed
-          // worker can be recovered without making the GET status endpoint write.
-          recoveryTimer = window.setTimeout(async () => {
+          // Recover a crashed payment-verification worker after its three-minute
+          // claim lease, without putting any secret in the callback URL.
+          retryTimer = window.setTimeout(async () => {
             try {
-              const recovered = await verifyForDownload();
+              const recovered = await redeemCheckout();
               if (!recovered && !cancelled) checkReadOnlyStatus();
             } catch {
               if (!cancelled) checkReadOnlyStatus();
@@ -196,7 +196,7 @@ function App() {
       }
     })();
 
-    return () => { cancelled = true; window.clearTimeout(recoveryTimer); };
+    return () => { cancelled = true; window.clearTimeout(retryTimer); };
   }, []);
   const requestFreshDownloadLink = async () => {
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(paymentEmail.trim())) {
@@ -220,6 +220,38 @@ function App() {
       setPaymentMessage(result.message || "If the reference and email match a paid record, a fresh download link has been sent to your email.");
     } catch (error) {
       setPaymentMessage(error.message || "Secure link recovery is temporarily unavailable. Please try again later.");
+    } finally {
+      setRecoverySending(false);
+    }
+  };
+
+  const redeemRecoveryCode = async () => {
+    if (!/^sitelift_[0-9a-f-]{36}_[a-f0-9]{32}$/i.test(recoveryReference.trim())) {
+      setPaymentMessage("Enter the payment reference from your Paystack receipt.");
+      return;
+    }
+    if (!/^[a-f0-9]{64}$/i.test(recoveryCode.trim())) {
+      setPaymentMessage("Enter the 64-character one-time recovery code from your email.");
+      return;
+    }
+    setRecoverySending(true);
+    setPaymentMessage("");
+    try {
+      const response = await fetch("/api/paystack/redeem", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reference: recoveryReference.trim(), recoveryCode: recoveryCode.trim() })
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !result.downloadReady || !result.downloadPath) {
+        throw new Error(result.error || "The recovery code is invalid, expired, or already used.");
+      }
+      setDownloadUrl(result.downloadPath);
+      setRecoveryVisible(false);
+      setRecoveryCode("");
+      setPaymentMessage("Recovery confirmed. Your private report session is ready.");
+    } catch (error) {
+      setPaymentMessage(error.message || "Unable to redeem this recovery code.");
     } finally {
       setRecoverySending(false);
     }
@@ -525,9 +557,15 @@ function App() {
                           <input type="text" autoComplete="off" value={recoveryReference} onChange={(event) => setRecoveryReference(event.target.value)} placeholder="sitelift_…" />
                         </label>
                         <button className="button button-secondary" type="button" disabled={recoverySending} onClick={requestFreshDownloadLink}>
-                          {recoverySending ? "Requesting secure link…" : "Email me a fresh secure link"}
+                          {recoverySending ? "Requesting recovery code…" : "Email me a one-time recovery code"}
                         </button>
-                        <small>The link is sent only to the email address recorded at checkout. It is never displayed on this page.</small>
+                        <label className="report-email-label">One-time recovery code
+                          <input type="text" inputMode="text" autoComplete="one-time-code" value={recoveryCode} onChange={(event) => setRecoveryCode(event.target.value.trim())} placeholder="64-character code from your email" />
+                        </label>
+                        <button className="button button-primary" type="button" disabled={recoverySending} onClick={redeemRecoveryCode}>
+                          {recoverySending ? "Verifying code…" : "Redeem recovery code"}
+                        </button>
+                        <small>The code is sent only to the email address recorded at checkout. It is entered here, never placed in a URL, and can be used once.</small>
                       </div>
                     )}
                     {downloadUrl && <a className="button button-primary" href={downloadUrl} rel="noreferrer">Download secure PDF ↗</a>}
