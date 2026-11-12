@@ -60,3 +60,15 @@ test("migration is additive and does not alter historical migrations or producti
   assert.doesNotMatch(sql, /delete\s+from/i);
   assert.match(sql, /delivery_blocked boolean not null default false/i);
 });
+
+test("application no longer reads or writes the legacy plaintext token column", async () => {
+  const initialize = await readFile(new URL("../api/paystack/initialize.js", import.meta.url), "utf8");
+  const recovery = await readFile(new URL("../api/paystack/resend-link.js", import.meta.url), "utf8");
+  const redeem = await readFile(new URL("../api/paystack/redeem.js", import.meta.url), "utf8");
+  const status = await readFile(new URL("../api/paystack/status.js", import.meta.url), "utf8");
+  for (const source of [initialize, recovery, redeem, status]) {
+    assert.doesNotMatch(source, /(?:select\([^\n]*download_token\s*[,)]|download_token\s*:)/i);
+  }
+  assert.match(initialize, /download_token_hash: sha256Hex\(downloadToken\)/);
+  assert.match(recovery, /download_token_hash: sha256Hex\(recoveryCode\)/);
+});
