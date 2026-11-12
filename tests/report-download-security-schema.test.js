@@ -8,12 +8,12 @@ const migrationPath = "../supabase/migrations/202611120001_sitelift_single_use_r
 test("expand migration hashes legacy tokens before the later plaintext-column cleanup", async () => {
   const sql = await readFile(new URL(migrationPath, import.meta.url), "utf8");
   const cleanup = await readFile(new URL("../supabase/migrations/202611120002_sitelift_remove_plaintext_download_tokens.sql", import.meta.url), "utf8");
-  const hashStep = sql.indexOf("set download_token_hash = encode(digest(convert_to(download_token, 'UTF8'), 'sha256'), 'hex')");
+  const hashStep = sql.indexOf("set download_token_hash = encode(extensions.digest(convert_to(download_token, 'UTF8'), 'sha256'), 'hex')");
   const indexStep = sql.indexOf("create unique index if not exists audit_payments_download_token_hash_uidx");
   assert.ok(hashStep >= 0 && indexStep > hashStep);
   assert.match(sql, /where download_token is not null\s+and download_token_hash is null/i);
   assert.doesNotMatch(sql, /download_token = null/i);
-  const lateBackfill = cleanup.indexOf("set download_token_hash = encode(digest(convert_to(download_token, 'UTF8'), 'sha256'), 'hex')");
+  const lateBackfill = cleanup.indexOf("set download_token_hash = encode(extensions.digest(convert_to(download_token, 'UTF8'), 'sha256'), 'hex')");
   const plaintextClear = cleanup.indexOf("set download_token = null");
   const columnDrop = cleanup.indexOf("drop column if exists download_token");
   assert.ok(lateBackfill >= 0 && plaintextClear > lateBackfill && columnDrop > plaintextClear);
