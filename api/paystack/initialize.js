@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { Redis } from "@upstash/redis";
 import { Ratelimit } from "@upstash/ratelimit";
 import { json, supabaseAdmin } from "../_lib/server.js";
+import { setRedemptionCookie, sha256Hex } from "../_lib/report-download.js";
 
 const PRICE_KOBO = 250000;
 let limiter;
@@ -62,11 +63,24 @@ export function createPaystackInitializeHandler({
       // index is the concurrency-safe guard; this lookup gives ordinary retries a
       // clear response without calling Paystack again.
       const { data: activePayment, error: activePaymentError } = await db.from("audit_payments")
-        .select("id,access_code,reference,status").eq("audit_id", auditId).in("status", ["pending", "processing", "initialization_unknown"])
+        .select("id,access_code,reference,status,download_token_hash").eq("audit_id", auditId).in("status", ["pending", "processing", "initialization_unknown"])
         .limit(1).maybeSingle();
       if (activePaymentError) throw activePaymentError;
       if (activePayment?.access_code && activePayment?.reference) {
-        // Resume the existing provider checkout instead of creating another charge.
+        // Rotate the one-time secret when resuming checkout. The old secret becomes
+        // unusable immediately; only its SHA-256 digest is persisted.
+        const downloadToken = randomBytes(32).toString("hex");
+        let rotation = db.from("audit_payments").update({
+          download_token_hash: sha256Hex(downloadToken),
+          token_expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
+        }).eq("id", activePayment.id).eq("status", activePayment.status);
+        rotation = activePayment.download_token_hash
+          ? rotation.eq("download_token_hash", activePayment.download_token_hash)
+          : rotation.is("download_token_hash", null);
+        const { data: rotated, error: rotationError } = await rotation.select("id").maybeSingle();
+        if (rotationError) throw rotationError;
+        if (!rotated) return json(res, 409, { error: "Checkout changed while it was being resumed. Please retry." });
+        setRedemptionCookie(res, activePayment.reference, downloadToken);
         return json(res, 200, {
           authorizationUrl: "https://checkout.paystack.com/" + encodeURIComponent(activePayment.access_code),
           reference: activePayment.reference
@@ -83,8 +97,8 @@ export function createPaystackInitializeHandler({
       const downloadToken = randomBytes(32).toString("hex");
       const { data: payment, error: paymentError } = await db.from("audit_payments").insert({
         audit_id: auditId, reference, amount: PRICE_KOBO, currency: "NGN",
-        customer_email: email, status: "pending", download_token: downloadToken,
-        token_expires_at: new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString()
+        customer_email: email, status: "pending", download_token_hash: sha256Hex(downloadToken),
+        token_expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
       }).select("id").single();
       if (paymentError?.code === "23505") {
         return json(res, 409, { error: "A checkout is already pending for this report. Please wait before trying again." });
@@ -95,7 +109,6 @@ export function createPaystackInitializeHandler({
       const callback = new URL("/audit/" + auditId, origin);
       callback.searchParams.set("payment", "return");
       callback.searchParams.set("reference", reference);
-      callback.searchParams.set("token", downloadToken);
       let upstream;
       try {
         upstream = await fetchImpl("https://api.paystack.co/transaction/initialize", {
@@ -124,7 +137,7 @@ export function createPaystackInitializeHandler({
         const { error: updateError } = await db.from("audit_payments").update(
           uncertain
             ? { status: "initialization_unknown" }
-            : { status: "initialization_failed", download_token: null, token_expires_at: null }
+            : { status: "initialization_failed", download_token_hash: null, token_expires_at: null }
         ).eq("id", payment.id).eq("status", "pending");
         if (updateError) console.error("Unable to record checkout initialization result", updateError.message);
         return json(res, uncertain ? 503 : 502, {
@@ -143,6 +156,7 @@ export function createPaystackInitializeHandler({
         if (unknownError) console.error("Unable to mark checkout outcome unknown", unknownError.message);
         console.error("Paystack access code persistence failed", accessCodeError.message);
       }
+      setRedemptionCookie(res, reference, downloadToken);
       return json(res, 200, { authorizationUrl: result.data.authorization_url, reference });
     } catch (error) {
       console.error("Paystack initialization failed", error?.message);
