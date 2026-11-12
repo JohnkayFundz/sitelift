@@ -13,7 +13,7 @@ alter table public.audit_payments
 
 -- Hash legacy secrets while retaining the old column until the contract phase.
 update public.audit_payments
-set download_token_hash = encode(digest(convert_to(download_token, 'UTF8'), 'sha256'), 'hex'),
+set download_token_hash = encode(extensions.digest(convert_to(download_token, 'UTF8'), 'sha256'), 'hex'),
     token_expires_at = least(
       coalesce(token_expires_at, created_at + interval '24 hours'),
       created_at + interval '24 hours'
