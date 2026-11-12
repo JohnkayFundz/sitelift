@@ -1,10 +1,10 @@
-import { json, supabaseAdmin } from "../../../_lib/server.js";
+import { json, supabaseAdmin } from "../../_lib/server.js";
 import {
   clearReportSessionCookie,
   readCookie,
   reportSessionCookieName,
   sha256Hex
-} from "../../../_lib/report-download.js";
+} from "../../_lib/report-download.js";
 
 const AUDIT_ID = /^[0-9a-f-]{36}$/i;
 const TOKEN = /^[a-f0-9]{64}$/i;
