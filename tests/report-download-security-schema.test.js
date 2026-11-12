@@ -46,7 +46,7 @@ test("redemption is row-locked, paid-only, single-use, and blocked during delive
 test("RPC execution is restricted to service_role and session records have RLS enabled", async () => {
   const sql = await readFile(new URL(migrationPath, import.meta.url), "utf8");
   assert.match(sql, /alter table public\.audit_download_sessions enable row level security/i);
-  assert.match(sql, /revoke all on public\.audit_download_sessions from anon, authenticated/i);
+  assert.match(sql, /revoke all on public\.audit_download_sessions from public, anon, authenticated/i);
   assert.match(sql, /revoke all on function public\.redeem_report_download\(text, text, text, timestamptz\) from public, anon, authenticated/i);
   assert.match(sql, /grant execute on function public\.redeem_report_download\(text, text, text, timestamptz\) to service_role/i);
   assert.match(sql, /grant execute on function public\.authorize_report_download\(uuid, text, timestamptz\) to service_role/i);
