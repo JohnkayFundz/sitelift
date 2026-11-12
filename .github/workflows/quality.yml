@@ -7,6 +7,7 @@ on:
       - feature/sitelift-conversion-hardening
       - production-readiness-hardening
       - integration/sitelift-seo-payment-review
+      - work/phase1-production-readiness-reconciliation
   pull_request:
     branches:
       - main
