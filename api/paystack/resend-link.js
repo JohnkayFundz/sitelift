@@ -97,7 +97,7 @@ export function createResendLinkHandler({
 
             if (!delivery.ok) {
               const { error: invalidateError } = await db.from("audit_payments")
-                .update({ download_token_hash: null, token_expires_at: null })
+                .update({ download_token_hash: null, download_token: null, token_expires_at: null })
                 .eq("id", payment.id)
                 .eq("download_token_hash", sha256Hex(recoveryCode));
               if (invalidateError) console.error("Recovery-code invalidation failed", invalidateError.message);
