@@ -95,7 +95,9 @@ export function createResendLinkHandler({
                 to: [payment.customer_email],
                 subject: "Your one-time SiteLift report recovery code",
                 text: "Your one-time SiteLift report recovery code is:\n\n" +
-                  recoveryCode + "\n\nIt expires in 24 hours and can be used once. Enter it on the SiteLift report page together with your payment reference. Do not share this code. If you did not request it, ignore this email."
+                  recoveryCode + "\n\nIt expires in 24 hours and can be used once. Open your report page: " +
+                  reportPage.toString() + "\nPayment reference: " + payment.reference +
+                  "\nEnter the code on that page. Do not share it. If you did not request this email, ignore it."
               }),
               signal: AbortSignal.timeout(15000)
             });
