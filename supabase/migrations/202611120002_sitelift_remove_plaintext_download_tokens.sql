@@ -6,7 +6,7 @@ begin;
 -- Catch any legacy-version checkout created during the rolling application
 -- deployment after the expand migration initially backfilled existing rows.
 update public.audit_payments
-set download_token_hash = encode(digest(convert_to(download_token, 'UTF8'), 'sha256'), 'hex'),
+set download_token_hash = encode(extensions.digest(convert_to(download_token, 'UTF8'), 'sha256'), 'hex'),
     token_expires_at = least(
       coalesce(token_expires_at, created_at + interval '24 hours'),
       created_at + interval '24 hours'
