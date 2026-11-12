@@ -78,9 +78,9 @@ test("migration has complete RPC input guards and a single balanced transaction"
   assert.ok(sql.includes("p_token_hash !~ '^[0-9a-f]{64}$'"));
   assert.ok(sql.includes("p_session_hash !~ '^[0-9a-f]{64}$'"));
   assert.ok(sql.includes("or p_now is null then"));
-  assert.equal((sql.match(/\\bbegin;/gi) || []).length, 1);
-  assert.equal((sql.match(/\\bcommit;/gi) || []).length, 1);
-  assert.equal((sql.match(/create or replace function public\\.redeem_report_download/gi) || []).length, 1);
-  assert.equal((sql.match(/create or replace function public\\.authorize_report_download/gi) || []).length, 1);
+  assert.equal(sql.split("begin;").length - 1, 1);
+  assert.equal(sql.split("commit;").length - 1, 1);
+  assert.equal(sql.split("create or replace function public.redeem_report_download").length - 1, 1);
+  assert.equal(sql.split("create or replace function public.authorize_report_download").length - 1, 1);
   assert.ok(sql.trimEnd().endsWith("commit;"));
 });
