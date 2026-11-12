@@ -38,23 +38,14 @@ export async function processVerifiedPaystackPayment(reference, dependencies = {
   const generateAuditPdf = dependencies.createAuditPdf || createAuditPdf;
   const db = getSupabaseAdmin();
   const { data: payment, error } = await db.from("audit_payments")
-    .select("id,audit_id,amount,currency,status,pdf_path,download_token,token_expires_at,processing_started_at")
+    .select("id,audit_id,amount,currency,status,pdf_path,processing_started_at")
     .eq("reference", reference).maybeSingle();
   if (error) throw error;
   if (!payment) return { status: "not_found" };
 
-  // A completed payment is immutable on duplicate deliveries: preserve both the
-  // existing PDF and the original download-token expiry.
+  // A completed payment is immutable on duplicate deliveries. Redemption
+  // secrets are created by checkout initialization/recovery, never here.
   if (payment.status === "paid" && payment.pdf_path) {
-    if (!payment.download_token || !payment.token_expires_at) {
-      const downloadToken = payment.download_token || randomBytes(32).toString("hex");
-      const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-      const { error: tokenError } = await db.from("audit_payments")
-        .update({ download_token: downloadToken, token_expires_at: expiresAt })
-        .eq("id", payment.id).eq("status", "paid")
-        .or("download_token.is.null,token_expires_at.is.null");
-      if (tokenError) throw tokenError;
-    }
     return { status: "paid", pdfPath: payment.pdf_path, duplicate: true };
   }
 
@@ -67,12 +58,12 @@ export async function processVerifiedPaystackPayment(reference, dependencies = {
     .update({ status: "processing", processing_started_at: nowIso })
     .eq("id", payment.id)
     .or("status.eq.pending,status.eq.initialization_unknown,and(status.eq.processing,processing_started_at.lt." + staleBefore + ")")
-    .select("id,audit_id,amount,currency,download_token")
+    .select("id,audit_id,amount,currency")
     .maybeSingle();
   if (claimError) throw claimError;
   if (!claimed) {
     const { data: current, error: currentError } = await db.from("audit_payments")
-      .select("status,pdf_path,download_token,token_expires_at,processing_started_at")
+      .select("status,pdf_path,processing_started_at")
       .eq("id", payment.id).maybeSingle();
     if (currentError) throw currentError;
     if (current?.status === "paid" && current.pdf_path) {
@@ -128,12 +119,10 @@ export async function processVerifiedPaystackPayment(reference, dependencies = {
       .upload(path, pdf, { contentType: "application/pdf", upsert: false, cacheControl: "3600" });
     if (uploadError && !String(uploadError.message).toLowerCase().includes("already exists")) throw uploadError;
 
-    const downloadToken = claimed.download_token || randomBytes(32).toString("hex");
-    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
     const { data: completed, error: updateError } = await db.from("audit_payments").update({
       status: "paid", paystack_transaction_id: String(transaction.id),
       paid_at: new Date().toISOString(), pdf_path: path, webhook_processed_at: new Date().toISOString(),
-      download_token: downloadToken, token_expires_at: expiresAt, processing_started_at: null
+      processing_started_at: null
     }).eq("id", payment.id).eq("status", "processing").eq("processing_started_at", nowIso)
       .select("id").maybeSingle();
     if (updateError) throw updateError;
