@@ -1,7 +1,7 @@
 import { json, supabaseAdmin } from "../_lib/server.js";
+import { readRedemptionCookie, sha256Hex } from "../_lib/report-download.js";
 
 const REFERENCE = /^sitelift_[0-9a-f-]{36}_[a-f0-9]{32}$/i;
-const TOKEN = /^[a-f0-9]{64}$/i;
 
 export function createPaymentStatusHandler({ getSupabaseAdmin = supabaseAdmin } = {}) {
   return async function handler(req, res) {
@@ -11,33 +11,32 @@ export function createPaymentStatusHandler({ getSupabaseAdmin = supabaseAdmin } 
     }
 
     const reference = req.query?.reference;
-    const token = req.query?.token;
-    if (typeof reference !== "string" || !REFERENCE.test(reference) ||
-        typeof token !== "string" || !TOKEN.test(token)) {
-      return json(res, 403, { error: "A valid download token is required" });
+    if (typeof reference !== "string" || !REFERENCE.test(reference)) {
+      return json(res, 400, { error: "A valid payment reference is required" });
     }
+    const token = readRedemptionCookie(req, reference);
+    if (!token) return json(res, 403, { error: "A valid one-time checkout session is required", reason: "invalid_token" });
 
     try {
       const db = getSupabaseAdmin();
       const { data: payment, error } = await db.from("audit_payments")
-        .select("status,pdf_path,token_expires_at")
+        .select("status,pdf_path,token_expires_at,delivery_blocked")
         .eq("reference", reference)
-        .eq("download_token", token)
+        .eq("download_token_hash", sha256Hex(token))
         .maybeSingle();
       if (error) throw error;
       if (!payment) {
-        return json(res, 403, { error: "Download token is invalid", reason: "invalid_token" });
+        return json(res, 403, { error: "One-time checkout session is invalid or already used", reason: "invalid_token" });
       }
       if (!payment.token_expires_at || new Date(payment.token_expires_at).getTime() <= Date.now()) {
-        return json(res, 403, { error: "Download token is invalid or expired", reason: "expired_token" });
+        return json(res, 403, { error: "One-time checkout session has expired", reason: "expired_token" });
       }
 
-      // This GET is intentionally read-only: reconciliation and signed-link
-      // creation belong to the explicit POST /api/paystack/verify action.
+      // This endpoint is intentionally read-only. It never reconciles a payment,
+      // rotates a secret, redeems a token, or creates a download session.
       return json(res, 200, {
         status: payment.status || "pending",
-        downloadReady: payment.status === "paid" && Boolean(payment.pdf_path),
-        downloadUrl: null
+        downloadReady: payment.status === "paid" && Boolean(payment.pdf_path) && !payment.delivery_blocked
       });
     } catch (error) {
       console.error("Payment status lookup failed", error?.message);
