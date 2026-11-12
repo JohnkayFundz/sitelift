@@ -85,10 +85,10 @@ function App() {
   const [auditResult, setAuditResult] = useState(null);
   const [auditLoading, setAuditLoading] = useState(false);
   const [paymentEmail, setPaymentEmail] = useState("");
-  const [paymentMessage, setPaymentMessage] = useState("");
+  const [paymentMessage, setPaymentMessage] = useState(() => new URLSearchParams(window.location.search).get("payment") === "recovery" ? "Enter the checkout email address and request a one-time recovery code for this paid report." : "");
   const [paymentLoading, setPaymentLoading] = useState(false);
   const [downloadUrl, setDownloadUrl] = useState("");
-  const [recoveryVisible, setRecoveryVisible] = useState(false);
+  const [recoveryVisible, setRecoveryVisible] = useState(() => new URLSearchParams(window.location.search).get("payment") === "recovery");
   const [recoveryReference, setRecoveryReference] = useState(() => {
     const params = new URLSearchParams(window.location.search);
     return params.get("reference") || params.get("trxref") || "";
@@ -122,12 +122,7 @@ function App() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const reference = params.get("reference") || params.get("trxref");
-    if (params.get("payment") === "recovery" && reference) {
-      setRecoveryVisible(true);
-      setRecoveryReference(reference);
-      setPaymentMessage("Enter the checkout email address and request a one-time recovery code for this paid report.");
-      return;
-    }
+    if (params.get("payment") === "recovery" && reference) return;
     if (params.get("payment") !== "return" || !reference) return;
     let cancelled = false, attempts = 0, retryTimer;
 
