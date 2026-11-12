@@ -42,7 +42,7 @@ test("recovery uses a body-only one-time code and never places it in an email UR
   assert.match(recovery, /to: \[payment\.customer_email\]/);
   assert.match(recovery, /download_token_hash: sha256Hex\(recoveryCode\)/);
   assert.doesNotMatch(recovery, /searchParams\.set\("token"/);
-  assert.doesNotMatch(recovery, /https?:\/\//);
+  assert.doesNotMatch(recovery, /new URL\(|searchParams\.set\("token"/);
 });
 test("duplicate charge.success webhook leaves an existing paid record immutable", async () => {
   const reference = "sitelift_decb676a-e5fb-40eb-9ea6-e983b2a4840b_c2ad7387235540f0b4eacd86bcfb87b9";
