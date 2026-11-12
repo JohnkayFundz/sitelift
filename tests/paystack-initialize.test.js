@@ -113,11 +113,13 @@ test("checkout initialization locks an unknown provider outcome and tells retrie
   assert.match(indexMigration, /where status in \('pending', 'processing', 'initialization_unknown'\)/);
 });
 
-test("checkout return URL includes both the payment reference and download token", async () => {
+test("checkout callback carries no secret and redemption token is stored only as a hash", async () => {
   const source = await readFile(new URL("../api/paystack/initialize.js", import.meta.url), "utf8");
   assert.match(source, /callback\.searchParams\.set\("payment", "return"\)/);
   assert.match(source, /callback\.searchParams\.set\("reference", reference\)/);
-  assert.match(source, /callback\.searchParams\.set\("token", downloadToken\)/);
+  assert.doesNotMatch(source, /searchParams\.set\("token"/);
+  assert.match(source, /download_token_hash: sha256Hex\(downloadToken\)/);
+  assert.match(source, /setRedemptionCookie\(res, reference, downloadToken\)/);
 });
 
 test("checkout initialization uses a shared five-attempt sliding window and fails closed without configuration", async () => {
