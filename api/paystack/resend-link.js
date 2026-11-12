@@ -68,6 +68,7 @@ export function createResendLinkHandler({
           const expiresAt = new Date(now() + 24 * 60 * 60 * 1000).toISOString();
           let update = db.from("audit_payments").update({
             download_token_hash: sha256Hex(recoveryCode),
+            download_token: null,
             token_expires_at: expiresAt,
             token_redeemed_at: null
           }).eq("id", payment.id).eq("status", "paid");
