@@ -96,7 +96,7 @@ test("paid report recovery rotates only a hash and emails the 256-bit code in th
   assert.deepEqual(payload.to, [email]);
   assert.equal(payload.from, process.env.RESEND_FROM_EMAIL);
   assert.match(payload.text, new RegExp(code));
-  const reportLink = payload.text.match(/https?:\/\/[^\\s]+/)?.[0];
+  const reportLink = payload.text.match(/https?:\/\/[^\s]+/)?.[0];
   assert.ok(reportLink);
   const parsedLink = new URL(reportLink);
   assert.equal(parsedLink.searchParams.get("payment"), "recovery");
