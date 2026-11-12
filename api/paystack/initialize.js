@@ -72,8 +72,7 @@ export function createPaystackInitializeHandler({
         const downloadToken = randomBytes(32).toString("hex");
         let rotation = db.from("audit_payments").update({
           download_token_hash: sha256Hex(downloadToken),
-          download_token: null,
-          token_expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
+              token_expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
         }).eq("id", activePayment.id).eq("status", activePayment.status);
         rotation = activePayment.download_token_hash
           ? rotation.eq("download_token_hash", activePayment.download_token_hash)
