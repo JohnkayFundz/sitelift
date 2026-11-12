@@ -82,6 +82,11 @@ export function createResendLinkHandler({
           if (rotateError) throw rotateError;
 
           if (rotated) {
+            const origin = process.env.APP_BASE_URL || "https://sitelift.vercel.app";
+            const reportPage = new URL("/audit/" + payment.audit_id, origin);
+            reportPage.searchParams.set("payment", "recovery");
+            reportPage.searchParams.set("reference", payment.reference);
+
             const delivery = await fetchImpl("https://api.resend.com/emails", {
               method: "POST",
               headers: { Authorization: "Bearer " + mailKey, "Content-Type": "application/json" },
