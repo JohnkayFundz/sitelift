@@ -72,3 +72,15 @@ test("application no longer reads or writes the legacy plaintext token column", 
   assert.match(initialize, /download_token_hash: sha256Hex\(downloadToken\)/);
   assert.match(recovery, /download_token_hash: sha256Hex\(recoveryCode\)/);
 });
+
+test("migration has complete RPC input guards and a single balanced transaction", async () => {
+  const sql = await readFile(new URL(migrationPath, import.meta.url), "utf8");
+  assert.ok(sql.includes("p_token_hash !~ '^[0-9a-f]{64}$'"));
+  assert.ok(sql.includes("p_session_hash !~ '^[0-9a-f]{64}$'"));
+  assert.ok(sql.includes("or p_now is null then"));
+  assert.equal((sql.match(/\\bbegin;/gi) || []).length, 1);
+  assert.equal((sql.match(/\\bcommit;/gi) || []).length, 1);
+  assert.equal((sql.match(/create or replace function public\\.redeem_report_download/gi) || []).length, 1);
+  assert.equal((sql.match(/create or replace function public\\.authorize_report_download/gi) || []).length, 1);
+  assert.ok(sql.trimEnd().endsWith("commit;"));
+});
