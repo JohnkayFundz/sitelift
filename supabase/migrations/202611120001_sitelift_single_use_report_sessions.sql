@@ -11,11 +11,12 @@ alter table public.audit_payments
   add column if not exists delivery_block_reason text,
   add column if not exists delivery_blocked_at timestamptz;
 
--- Convert any legacy raw tokens before clearing the plaintext column. This is
--- deliberately idempotent and preserves the existing token's validity.
+-- Expand phase: backfill hashes without deleting the legacy column yet. This
+-- permits a controlled application cutover while the old application version
+-- may still be serving requests. The follow-up contract migration removes the
+-- plaintext column only after the new application is deployed.
 update public.audit_payments
-set download_token_hash = encode(digest(convert_to(download_token, 'UTF8'), 'sha256'), 'hex'),
-    download_token = null
+set download_token_hash = encode(digest(convert_to(download_token, 'UTF8'), 'sha256'), 'hex')
 where download_token is not null
   and download_token_hash is null;
 
