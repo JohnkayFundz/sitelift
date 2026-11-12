@@ -13,6 +13,10 @@ test("expand migration hashes legacy tokens before the later plaintext-column cl
   assert.ok(hashStep >= 0 && indexStep > hashStep);
   assert.match(sql, /where download_token is not null\s+and download_token_hash is null/i);
   assert.doesNotMatch(sql, /download_token = null/i);
+  const lateBackfill = cleanup.indexOf("set download_token_hash = encode(digest(convert_to(download_token, 'UTF8'), 'sha256'), 'hex')");
+  const plaintextClear = cleanup.indexOf("set download_token = null");
+  const columnDrop = cleanup.indexOf("drop column if exists download_token");
+  assert.ok(lateBackfill >= 0 && plaintextClear > lateBackfill && columnDrop > plaintextClear);
   assert.match(cleanup, /set download_token = null/i);
   assert.match(cleanup, /drop column if exists download_token/i);
   assert.match(cleanup, /drop index if exists public\.audit_payments_download_token_uidx/i);
