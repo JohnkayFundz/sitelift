@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { json, processVerifiedPaystackPayment, supabaseAdmin } from "../_lib/server.js";
+import { json, supabaseAdmin } from "../_lib/server.js";
 import {
   clearRedemptionCookie,
   readRedemptionCookie,
@@ -12,7 +12,6 @@ const TOKEN = /^[a-f0-9]{64}$/i;
 
 export function createReportRedemptionHandler({
   getSupabaseAdmin = supabaseAdmin,
-  processPayment = processVerifiedPaystackPayment,
   createSessionToken = () => randomBytes(32).toString("hex")
 } = {}) {
   return async function handler(req, res) {
@@ -35,7 +34,7 @@ export function createReportRedemptionHandler({
     try {
       const db = getSupabaseAdmin();
       const { data: authorized, error: authorizationError } = await db.from("audit_payments")
-        .select("status,token_expires_at,delivery_blocked")
+        .select("status,pdf_path,token_expires_at,delivery_blocked")
         .eq("reference", reference)
         .eq("download_token_hash", sha256Hex(token))
         .maybeSingle();
@@ -48,10 +47,14 @@ export function createReportRedemptionHandler({
         return json(res, 403, { error: "Report delivery is temporarily blocked" });
       }
 
-      const result = await processPayment(reference);
-      if (result.status === "not_found") return json(res, 404, { error: "Payment not found" });
-      if (result.status !== "paid") {
-        return json(res, 200, { status: result.status || "pending", downloadReady: false });
+      // Payment fulfillment is exclusively worker-driven. Customer redemption
+      // only consumes the one-time authorization after the worker commits paid
+      // status and the deterministic private PDF path.
+      if (authorized.status !== "paid" || !authorized.pdf_path) {
+        return json(res, 200, {
+          status: authorized.status || "pending",
+          downloadReady: false
+        });
       }
 
       const sessionToken = createSessionToken();
