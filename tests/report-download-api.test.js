@@ -61,14 +61,13 @@ test("redemption accepts only POST and does not inspect database for invalid ref
 
 test("redemption creates a session only after paid status and successful atomic RPC", async () => {
   let rpcArgs;
-  const db = { from: () => ({ select() { return this; }, eq() { return this; }, maybeSingle: async () => ({ data: { status: "paid", token_expires_at: "2099-01-01T00:00:00Z", delivery_blocked: false }, error: null }) }), rpc: async (name, args) => {
+  const db = { from: () => ({ select() { return this; }, eq() { return this; }, maybeSingle: async () => ({ data: { status: "paid", pdf_path: auditId + "/" + reference + ".pdf", token_expires_at: "2099-01-01T00:00:00Z", delivery_blocked: false }, error: null }) }), rpc: async (name, args) => {
     assert.equal(name, "redeem_report_download");
     rpcArgs = args;
     return { data: [{ audit_id: auditId, session_expires_at: "2099-01-01T00:00:00Z" }], error: null };
   } };
   const handler = createReportRedemptionHandler({
     getSupabaseAdmin: () => db,
-    processPayment: async () => ({ status: "paid" }),
     createSessionToken: () => "b".repeat(64)
   });
   const res = response();
@@ -91,7 +90,6 @@ test("pending payment never redeems token or creates session", async () => {
   const db = { from: () => ({ select() { return this; }, eq() { return this; }, maybeSingle: async () => ({ data: { status: "pending", token_expires_at: "2099-01-01T00:00:00Z", delivery_blocked: false }, error: null }) }), rpc: async () => { rpcCalls += 1; return { data: null, error: null }; } };
   const handler = createReportRedemptionHandler({
     getSupabaseAdmin: () => db,
-    processPayment: async () => ({ status: "pending" })
   });
   const res = response();
   await handler({ method: "POST", body: { reference, recoveryCode: token } }, res);
