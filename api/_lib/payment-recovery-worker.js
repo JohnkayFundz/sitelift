@@ -54,7 +54,9 @@ async function downloadAndVerifyObject(storage, path, expected) {
   }
 
   const actual = artifactIdentity(bytes);
-  if (actual.sha256 !== expected.sha256 || actual.sizeBytes !== expected.sizeBytes) {
+  const expectedSha256 = expected.sha256 ?? expected.artifact_sha256;
+  const expectedSizeBytes = expected.sizeBytes ?? expected.artifact_size_bytes;
+  if (actual.sha256 !== expectedSha256 || actual.sizeBytes !== Number(expectedSizeBytes)) {
     throw new RecoveryError("pdf_storage_integrity_mismatch", false);
   }
   return bytes;
