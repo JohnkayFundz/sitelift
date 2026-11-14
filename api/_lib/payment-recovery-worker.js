@@ -1,7 +1,7 @@
 import { createAuditPdf, supabaseAdmin } from "./server.js";
 
 const PAYSTACK_VERIFY_TIMEOUT_MS = 15_000;
-const DEFAULT_MAX_JOBS = 2;
+const DEFAULT_MAX_JOBS = 1;
 const DEFAULT_BUDGET_MS = 45_000;
 
 class RecoveryError extends Error {
