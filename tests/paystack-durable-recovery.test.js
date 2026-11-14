@@ -28,15 +28,46 @@ function response() {
   };
 }
 
-function workerDb({ leaseAssertions = [true, true], completion = true } = {}) {
+function workerDb({
+  leaseAssertions = [true, true, true],
+  completion = true,
+  initialObject = null,
+  initialManifest = null,
+  uploadError = null
+} = {}) {
   const calls = [];
   let assertionIndex = 0;
+  let storedObject = initialObject;
+  let manifest = initialManifest;
+  const audit = {
+    id: claim.audit_id,
+    target_url: "https://example.com",
+    final_url: "https://example.com/",
+    strategy: "mobile",
+    created_at: "2026-11-14T00:00:00.000Z",
+    report: { scores: [], metrics: [], opportunities: [] }
+  };
   const db = {
     rpc: async (name, args) => {
       calls.push({ name, args });
       if (name === "assert_payment_recovery_lease") {
-        const value = leaseAssertions[assertionIndex++];
-        return { data: value, error: null };
+        return { data: leaseAssertions[assertionIndex++], error: null };
+      }
+      if (name === "get_payment_recovery_artifact") {
+        return { data: manifest ? [manifest] : [], error: null };
+      }
+      if (name === "record_payment_recovery_artifact") {
+        const proposed = {
+          artifact_sha256: args.p_artifact_sha256,
+          artifact_size_bytes: args.p_artifact_size_bytes
+        };
+        if (manifest && (
+          manifest.artifact_sha256 !== proposed.artifact_sha256 ||
+          Number(manifest.artifact_size_bytes) !== Number(proposed.artifact_size_bytes)
+        )) return { data: [], error: null };
+        const created = !manifest;
+        manifest ||= proposed;
+        return { data: [{ ...manifest, created }], error: null };
       }
       if (name === "complete_payment_recovery_job") {
         return { data: completion, error: null };
@@ -55,17 +86,7 @@ function workerDb({ leaseAssertions = [true, true], completion = true } = {}) {
           assert.equal(value, claim.audit_id);
           return this;
         },
-        maybeSingle: async () => ({
-          data: {
-            id: claim.audit_id,
-            target_url: "https://example.com",
-            final_url: "https://example.com/",
-            strategy: "mobile",
-            created_at: "2026-11-14T00:00:00.000Z",
-            report: { scores: [], metrics: [], opportunities: [] }
-          },
-          error: null
-        })
+        maybeSingle: async () => ({ data: audit, error: null })
       };
     },
     storage: {
@@ -74,13 +95,25 @@ function workerDb({ leaseAssertions = [true, true], completion = true } = {}) {
         return {
           upload: async (path, pdf, options) => {
             calls.push({ name: "upload", path, pdf, options });
-            return { error: null };
+            if (!uploadError) storedObject = Buffer.from(pdf);
+            return { error: uploadError };
+          },
+          download: async (path) => {
+            calls.push({ name: "download", path });
+            return storedObject
+              ? { data: new Blob([storedObject], { type: "application/pdf" }), error: null }
+              : { data: null, error: { statusCode: "404", message: "Object not found" } };
           }
         };
       }
     }
   };
-  return { db, calls };
+  return {
+    db, calls,
+    get storedObject() { return storedObject; },
+    get manifest() { return manifest; },
+    setStoredObject(value) { storedObject = value; }
+  };
 }
 
 test("worker verifies transaction, fences ownership, uploads deterministic PDF and completes via RPC", async () => {
@@ -110,13 +143,16 @@ test("worker verifies transaction, fences ownership, uploads deterministic PDF a
   });
 
   assert.deepEqual(result, { status: "completed" });
-  assert.deepEqual(calls.filter(call => call.name === "assert_payment_recovery_lease").map(call => call.args.p_lease_token), [leaseToken, leaseToken]);
+  assert.deepEqual(calls.filter(call => call.name === "assert_payment_recovery_lease").map(call => call.args.p_lease_token), [leaseToken, leaseToken, leaseToken]);
   const upload = calls.find(call => call.name === "upload");
   assert.equal(upload.path, claim.audit_id + "/" + reference + ".pdf");
   assert.equal(upload.options.upsert, false);
   const complete = calls.find(call => call.name === "complete_payment_recovery_job");
   assert.equal(complete.args.p_transaction_id, "987654");
   assert.equal(complete.args.p_pdf_path, upload.path);
+  assert.equal(complete.args.p_artifact_sha256, calls.find(call => call.name === "record_payment_recovery_artifact").args.p_artifact_sha256);
+  assert.equal(complete.args.p_artifact_size_bytes, upload.pdf.length);
+  assert.equal(calls.filter(call => call.name === "download").length, 1);
 });
 
 test("worker dead-letters a transaction whose amount or identity does not match", async () => {
@@ -174,7 +210,53 @@ test("worker stops immediately when the fencing RPC says its lease was lost", as
   assert.equal(calls.some(call => call.name === "fail_payment_recovery_job"), false);
 });
 
-test("dispatcher requires the configured bearer secret and invokes a one-job bounded batch", async () => {
+
+test("retry reuses an existing object only after manifest digest and size verification", async () => {
+  const bytes = Buffer.from("%PDF-1.4\\npreviously-uploaded");
+  const { createHash } = await import("node:crypto");
+  const manifest = {
+    artifact_sha256: createHash("sha256").update(bytes).digest("hex"),
+    artifact_size_bytes: bytes.length
+  };
+  const harness = workerDb({ initialObject: bytes, initialManifest: manifest, leaseAssertions: [true, true] });
+  let generationCalls = 0;
+  const result = await processClaimedPaymentRecovery({
+    claim, db: harness.db, secret: "unit-test-paystack-secret",
+    fetchImpl: async () => ({
+      ok: true,
+      json: async () => ({ status: true, data: { status: "success", reference, currency: "NGN", amount: 250000, id: 987654 } })
+    }),
+    generatePdf: () => { generationCalls += 1; return Buffer.from("%PDF-1.4\\nshould-not-be-used"); }
+  });
+  assert.deepEqual(result, { status: "completed" });
+  assert.equal(generationCalls, 0);
+  assert.equal(harness.calls.some(call => call.name === "upload"), false);
+  assert.equal(harness.calls.some(call => call.name === "record_payment_recovery_artifact"), false);
+});
+
+test("existing object with mismatched digest fails closed before payment completion", async () => {
+  const { createHash } = await import("node:crypto");
+  const expected = Buffer.from("%PDF-1.4\\nexpected");
+  const actual = Buffer.from("%PDF-1.4\\ntampered");
+  const manifest = {
+    artifact_sha256: createHash("sha256").update(expected).digest("hex"),
+    artifact_size_bytes: expected.length
+  };
+  const { db, calls } = workerDb({ initialObject: actual, initialManifest: manifest, leaseAssertions: [true] });
+  const result = await processClaimedPaymentRecovery({
+    claim, db, secret: "unit-test-paystack-secret",
+    fetchImpl: async () => ({
+      ok: true,
+      json: async () => ({ status: true, data: { status: "success", reference, currency: "NGN", amount: 250000, id: 987654 } })
+    }),
+    generatePdf: () => { throw new Error("must not regenerate over an integrity mismatch"); }
+  });
+  assert.equal(result.status, "dead_letter");
+  assert.equal(result.errorCode, "pdf_storage_integrity_mismatch");
+  assert.equal(calls.some(call => call.name === "complete_payment_recovery_job"), false);
+  assert.equal(calls.some(call => call.name === "upload"), false);
+});
+\ntest("dispatcher requires the configured bearer secret and invokes a one-job bounded batch", async () => {
   const originalSecret = process.env.CRON_SECRET;
   process.env.CRON_SECRET = "c".repeat(48);
   let calls = 0;
