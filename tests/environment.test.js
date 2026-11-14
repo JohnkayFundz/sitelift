@@ -69,6 +69,21 @@ test("Local development without VERCEL_ENV accepts only the fixed staging projec
   });
 });
 
+test("Local automated test runtime accepts only the fixed staging project", () => {
+  withEnvironment({
+    VERCEL_ENV: undefined,
+    NODE_ENV: "test",
+    VERCEL: undefined
+  }, () => {
+    assert.doesNotThrow(() => assertSupabaseEnvironmentSafe({
+      supabaseUrl: stagingUrl
+    }));
+    assert.throws(() => assertSupabaseEnvironmentSafe({
+      supabaseUrl: productionUrl
+    }), /does not match the approved project/);
+  });
+});
+
 test("Vercel development is treated as local and is restricted to staging", () => {
   assert.doesNotThrow(() => assertSupabaseEnvironmentSafe({
     vercelEnv: "development",
