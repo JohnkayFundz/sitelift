@@ -244,7 +244,7 @@ begin
 
   update public.payment_recovery_jobs
     set status = 'processing',
-        attempt_count = attempt_count + 1,
+        attempt_count = j.attempt_count + 1,
         lease_token = v_token,
         lease_expires_at = v_now + interval '120 seconds',
         pre_claim_payment_status = v_pre_status,
