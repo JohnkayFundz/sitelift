@@ -28,11 +28,13 @@ test("Production accepts only the fixed SiteLift production project", () => {
   assert.doesNotThrow(() => assertSupabaseEnvironmentSafe({
     vercelEnv: "production",
     nodeEnv: "production",
+    vercel: "1",
     supabaseUrl: productionUrl
   }));
   assert.throws(() => assertSupabaseEnvironmentSafe({
     vercelEnv: "production",
     nodeEnv: "production",
+    vercel: "1",
     supabaseUrl: stagingUrl
   }), /does not match the approved project/);
 });
@@ -41,11 +43,13 @@ test("Preview accepts only the fixed SiteLift staging project", () => {
   assert.doesNotThrow(() => assertSupabaseEnvironmentSafe({
     vercelEnv: "preview",
     nodeEnv: "production",
+    vercel: "1",
     supabaseUrl: stagingUrl
   }));
   assert.throws(() => assertSupabaseEnvironmentSafe({
     vercelEnv: "preview",
     nodeEnv: "production",
+    vercel: "1",
     supabaseUrl: productionUrl
   }), /does not match the approved project/);
 });
@@ -69,11 +73,13 @@ test("Vercel development is treated as local and is restricted to staging", () =
   assert.doesNotThrow(() => assertSupabaseEnvironmentSafe({
     vercelEnv: "development",
     nodeEnv: "development",
+    vercel: "1",
     supabaseUrl: stagingUrl
   }));
   assert.throws(() => assertSupabaseEnvironmentSafe({
     vercelEnv: "development",
     nodeEnv: "development",
+    vercel: "1",
     supabaseUrl: productionUrl
   }), /does not match the approved project/);
 });
@@ -85,6 +91,7 @@ test("Missing, unknown, and conflicting runtime identities fail closed", () => {
     { vercelEnv: "preview ", nodeEnv: "production", vercel: "1", supabaseUrl: stagingUrl },
     { vercelEnv: undefined, nodeEnv: "development", vercel: "1", supabaseUrl: stagingUrl },
     { vercelEnv: "production", nodeEnv: "development", vercel: "1", supabaseUrl: productionUrl },
+    { vercelEnv: "production", nodeEnv: "production", vercel: undefined, supabaseUrl: productionUrl },
     { vercelEnv: "preview", nodeEnv: "development", vercel: "1", supabaseUrl: stagingUrl }
   ]) {
     assert.throws(
@@ -98,6 +105,7 @@ test("A caller-supplied preview project reference cannot override the fixed stag
   assert.throws(() => assertSupabaseEnvironmentSafe({
     vercelEnv: "preview",
     nodeEnv: "production",
+    vercel: "1",
     supabaseUrl: "https://abcdefghijklmnopqrst.supabase.co",
     approvedPreviewProjectRef: "abcdefghijklmnopqrst"
   }), /does not match the approved project/);
@@ -108,6 +116,7 @@ test("Supabase URL is mandatory in every execution environment", () => {
     assert.throws(() => assertSupabaseEnvironmentSafe({
       vercelEnv: "preview",
       nodeEnv: "production",
+      vercel: "1",
       supabaseUrl
     }), /Supabase URL is missing/);
   }
@@ -115,7 +124,8 @@ test("Supabase URL is mandatory in every execution environment", () => {
   withEnvironment({ SUPABASE_URL: undefined }, () => {
     assert.throws(() => assertSupabaseEnvironmentSafe({
       vercelEnv: "preview",
-      nodeEnv: "production"
+      nodeEnv: "production",
+      vercel: "1"
     }), /Supabase URL is missing/);
   });
 });
@@ -135,6 +145,7 @@ test("Supabase URL must be an exact HTTPS project origin", () => {
       () => assertSupabaseEnvironmentSafe({
         vercelEnv: "preview",
         nodeEnv: "production",
+        vercel: "1",
         supabaseUrl
       }),
       /configured Supabase URL|configured Supabase host/
