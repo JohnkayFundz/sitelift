@@ -39,6 +39,7 @@ test("webhook durably enqueues signed events; worker owns payment processing", a
   assert.match(app, /clearTimeout\(retryTimer\)/);
 });
 
+
 test("recovery uses a body-only one-time code and never places it in an email URL", async () => {
   const { readFile } = await import("node:fs/promises");
   const status = await readFile(new URL("../api/paystack/status.js", import.meta.url), "utf8");
@@ -84,6 +85,7 @@ test("duplicate charge.success for an already-paid record is durably accepted wi
     else process.env.PAYSTACK_SECRET_KEY = originalSecret;
   }
 });
+
 
 test("GET payment status is read-only and authorizes through the HttpOnly redemption cookie", async () => {
   const reference = "sitelift_decb676a-e5fb-40eb-9ea6-e983b2a4840b_c2ad7387235540f0b4eacd86bcfb87b9";
@@ -228,11 +230,7 @@ test("repeated charge.success deliveries rely on idempotent durable enqueue", as
     assert.equal(name, "enqueue_payment_recovery_job");
     assert.equal(args.p_reference, reference);
     enqueueCalls += 1;
-    return { data: [{
-      accepted: true,
-      duplicate: enqueueCalls > 1,
-      already_paid: false
-    }], error: null };
+    return { data: [{ accepted: true, duplicate: enqueueCalls > 1, already_paid: false }], error: null };
   } };
   const handler = createPaystackWebhookHandler({ getSupabaseAdmin: () => db });
   const raw = Buffer.from(JSON.stringify({ event: "charge.success", data: { reference } }));
@@ -262,6 +260,252 @@ test("repeated charge.success deliveries rely on idempotent durable enqueue", as
     else process.env.PAYSTACK_SECRET_KEY = originalSecret;
   }
 });
+
+
+function paymentProcessingHarness({
+  uploadError: initialUploadError = null,
+  paymentOverrides = {}
+} = {}) {
+  let uploadError = initialUploadError;
+  let uploadCalls = 0;
+
+  const payment = {
+    id: "payment-1",
+    audit_id: "audit-1",
+    amount: 250000,
+    currency: "NGN",
+    status: "pending",
+    pdf_path: null,
+    download_token: "a".repeat(64),
+    token_expires_at: "2099-01-01T00:00:00.000Z",
+    processing_started_at: null,
+    reference:
+      "sitelift_decb676a-e5fb-40eb-9ea6-e983b2a4840b_c2ad7387235540f0b4eacd86bcfb87b9",
+    ...paymentOverrides
+  };
+
+  // Preserve existing test semantics: successful mutations only.
+  const updates = [];
+  const updateAttempts = [];
+  const successfulUpdates = [];
+  const rejectedUpdates = [];
+
+  function matchesUpdate(filters, orFilter) {
+    const basicMatch = filters.every(
+      ([key, value]) => payment[key] === value
+    );
+
+    if (!basicMatch) return false;
+    if (!orFilter) return true;
+
+    if (orFilter === "download_token.is.null,token_expires_at.is.null") {
+      return (
+        payment.download_token == null ||
+        payment.token_expires_at == null
+      );
+    }
+
+    const staleMatch = orFilter.match(
+      /processing_started_at\.lt\.([^,)]+)/
+    );
+
+    return (
+      (orFilter.includes("status.eq.pending") &&
+        payment.status === "pending") ||
+      (orFilter.includes("status.eq.initialization_unknown") &&
+        payment.status === "initialization_unknown") ||
+      (orFilter.includes("status.eq.processing") &&
+        payment.status === "processing" &&
+        payment.processing_started_at != null &&
+        staleMatch != null &&
+        Date.parse(payment.processing_started_at) <
+          Date.parse(staleMatch[1]))
+    );
+  }
+
+  function recordUpdateAttempt(filters, orFilter, values) {
+    const matched = matchesUpdate(filters, orFilter);
+    const attempt = {
+      filters: structuredClone(filters),
+      orFilter,
+      values: structuredClone(values),
+      matched
+    };
+
+    updateAttempts.push(attempt);
+
+    if (!matched) {
+      rejectedUpdates.push(attempt);
+      return false;
+    }
+
+    Object.assign(payment, structuredClone(values));
+    updates.push(structuredClone(values));
+    successfulUpdates.push(attempt);
+    return true;
+  }
+
+  const db = {
+    from(table) {
+      if (table === "audit_payments") {
+        return {
+          select() {
+            const filters = [];
+
+            return {
+              eq(key, value) {
+                filters.push([key, value]);
+                return this;
+              },
+
+              maybeSingle: async () => ({
+                data: filters.some(
+                  ([key, value]) => payment[key] !== value
+                )
+                  ? null
+                  : structuredClone(payment),
+                error: null
+              })
+            };
+          },
+
+          update(values) {
+            const filters = [];
+            let orFilter = null;
+            let wantsRow = false;
+
+            const query = {
+              eq(key, value) {
+                filters.push([key, value]);
+                return this;
+              },
+
+              or(value) {
+                orFilter = value;
+                return this;
+              },
+
+              select() {
+                wantsRow = true;
+                return this;
+              },
+
+              async maybeSingle() {
+                const matched = recordUpdateAttempt(
+                  filters,
+                  orFilter,
+                  values
+                );
+
+                if (!matched) {
+                  return { data: null, error: null };
+                }
+
+                return {
+                  data: wantsRow ? { id: payment.id } : null,
+                  error: null
+                };
+              },
+
+              then(resolve, reject) {
+                recordUpdateAttempt(filters, orFilter, values);
+                return Promise.resolve({ error: null }).then(
+                  resolve,
+                  reject
+                );
+              }
+            };
+
+            return query;
+          }
+        };
+      }
+
+      if (table === "audits") {
+        return {
+          select() {
+            return this;
+          },
+
+          eq() {
+            return this;
+          },
+
+          single: async () => ({
+            data: {
+              id: "audit-1",
+              target_url: "https://example.com",
+              final_url: "https://example.com/",
+              strategy: "mobile",
+              created_at: "2026-10-20T00:00:00.000Z",
+              report: {
+                scores: [],
+                metrics: [],
+                opportunities: []
+              }
+            },
+            error: null
+          })
+        };
+      }
+
+      throw new Error("Unexpected table " + table);
+    },
+
+    storage: {
+      from(bucket) {
+        assert.equal(bucket, "audit-reports");
+
+        return {
+          upload: async () => {
+            uploadCalls += 1;
+            return { error: uploadError };
+          }
+        };
+      }
+    }
+  };
+
+  return {
+    db,
+    payment,
+    updates,
+    updateAttempts,
+    successfulUpdates,
+    rejectedUpdates,
+    get uploadCalls() {
+      return uploadCalls;
+    },
+    setUploadError(value) {
+      uploadError = value;
+    }
+  };
+}
+
+function installControlledClock(initialTime) {
+  const RealDate = globalThis.Date;
+  let currentTime = initialTime;
+
+  globalThis.Date = class ControlledDate extends RealDate {
+    constructor(...args) {
+      super(...(args.length ? args : [currentTime]));
+    }
+
+    static now() {
+      return currentTime;
+    }
+  };
+
+  return {
+    advance(milliseconds) {
+      currentTime += milliseconds;
+    },
+
+    restore() {
+      globalThis.Date = RealDate;
+    }
+  };
+}
 
 test("stale worker cannot reset a newer worker's processing claim", async () => {
   const originalSecret = process.env.PAYSTACK_SECRET_KEY;
