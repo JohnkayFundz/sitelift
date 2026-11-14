@@ -78,7 +78,6 @@ declare
   v_payment_status text;
   v_pdf_path text;
   v_inserted_id uuid;
-  v_job_status text;
 begin
   if p_reference is null or length(p_reference) < 1 or length(p_reference) > 200 then
     return query select false, false, false;
@@ -90,7 +89,9 @@ begin
   from public.audit_payments ap
   where ap.reference = p_reference;
 
-  if not found then
+  if not found
+    or (v_payment_status <> 'paid' and v_payment_status not in ('pending', 'processing', 'initialization_unknown'))
+    or (v_payment_status = 'paid' and v_pdf_path is null) then
     return query select false, false, false;
     return;
   end if;
@@ -112,9 +113,6 @@ begin
       and j.status <> 'completed';
   end if;
 
-  select j.status into v_job_status
-  from public.payment_recovery_jobs j
-  where j.reference = p_reference;
 
   return query
     select true, v_inserted_id is null,
@@ -195,7 +193,8 @@ begin
         or v_job.lease_expires_at > v_now then
         return;
       end if;
-    elsif v_payment.processing_started_at is null
+    elsif v_job.status <> 'pending'
+      or v_payment.processing_started_at is null
       or v_payment.processing_started_at > v_now - interval '3 minutes' then
       return;
     end if;
