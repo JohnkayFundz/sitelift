@@ -6,13 +6,33 @@ import { assertSupabaseEnvironmentSafe } from "../api/_lib/environment.js";
 const productionUrl = "https://jnuqpijilwmhefbtjimx.supabase.co";
 const stagingUrl = "https://pxlshpoooiuviszdgrzj.supabase.co";
 
+function withEnvironment(values, callback) {
+  const keys = Object.keys(values);
+  const previous = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
+  for (const [key, value] of Object.entries(values)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+
+  try {
+    return callback();
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
 test("Production accepts only the fixed SiteLift production project", () => {
   assert.doesNotThrow(() => assertSupabaseEnvironmentSafe({
     vercelEnv: "production",
+    nodeEnv: "production",
     supabaseUrl: productionUrl
   }));
   assert.throws(() => assertSupabaseEnvironmentSafe({
     vercelEnv: "production",
+    nodeEnv: "production",
     supabaseUrl: stagingUrl
   }), /does not match the approved project/);
 });
@@ -20,36 +40,40 @@ test("Production accepts only the fixed SiteLift production project", () => {
 test("Preview accepts only the fixed SiteLift staging project", () => {
   assert.doesNotThrow(() => assertSupabaseEnvironmentSafe({
     vercelEnv: "preview",
+    nodeEnv: "production",
     supabaseUrl: stagingUrl
   }));
   assert.throws(() => assertSupabaseEnvironmentSafe({
     vercelEnv: "preview",
+    nodeEnv: "production",
     supabaseUrl: productionUrl
   }), /does not match the approved project/);
 });
 
-test("Local development accepts only the fixed SiteLift staging project", () => {
-  assert.doesNotThrow(() => assertSupabaseEnvironmentSafe({
-    vercelEnv: undefined,
-    nodeEnv: "development",
-    vercel: undefined,
-    supabaseUrl: stagingUrl
-  }));
-  assert.throws(() => assertSupabaseEnvironmentSafe({
-    vercelEnv: undefined,
-    nodeEnv: "development",
-    vercel: undefined,
-    supabaseUrl: productionUrl
-  }), /does not match the approved project/);
+test("Local development without VERCEL_ENV accepts only the fixed staging project", () => {
+  withEnvironment({
+    VERCEL_ENV: undefined,
+    NODE_ENV: "development",
+    VERCEL: undefined
+  }, () => {
+    assert.doesNotThrow(() => assertSupabaseEnvironmentSafe({
+      supabaseUrl: stagingUrl
+    }));
+    assert.throws(() => assertSupabaseEnvironmentSafe({
+      supabaseUrl: productionUrl
+    }), /does not match the approved project/);
+  });
 });
 
 test("Vercel development is treated as local and is restricted to staging", () => {
   assert.doesNotThrow(() => assertSupabaseEnvironmentSafe({
     vercelEnv: "development",
+    nodeEnv: "development",
     supabaseUrl: stagingUrl
   }));
   assert.throws(() => assertSupabaseEnvironmentSafe({
     vercelEnv: "development",
+    nodeEnv: "development",
     supabaseUrl: productionUrl
   }), /does not match the approved project/);
 });
@@ -59,11 +83,13 @@ test("Missing, unknown, and conflicting runtime identities fail closed", () => {
     { vercelEnv: undefined, nodeEnv: "production", vercel: undefined, supabaseUrl: stagingUrl },
     { vercelEnv: "staging", nodeEnv: "development", vercel: "1", supabaseUrl: stagingUrl },
     { vercelEnv: "preview ", nodeEnv: "production", vercel: "1", supabaseUrl: stagingUrl },
-    { vercelEnv: undefined, nodeEnv: "development", vercel: "1", supabaseUrl: stagingUrl }
+    { vercelEnv: undefined, nodeEnv: "development", vercel: "1", supabaseUrl: stagingUrl },
+    { vercelEnv: "production", nodeEnv: "development", vercel: "1", supabaseUrl: productionUrl },
+    { vercelEnv: "preview", nodeEnv: "development", vercel: "1", supabaseUrl: stagingUrl }
   ]) {
     assert.throws(
       () => assertSupabaseEnvironmentSafe(options),
-      /environment is missing or unrecognized/
+      /environment is missing, unrecognized, or conflicting/
     );
   }
 });
@@ -71,18 +97,27 @@ test("Missing, unknown, and conflicting runtime identities fail closed", () => {
 test("A caller-supplied preview project reference cannot override the fixed staging identity", () => {
   assert.throws(() => assertSupabaseEnvironmentSafe({
     vercelEnv: "preview",
+    nodeEnv: "production",
     supabaseUrl: "https://abcdefghijklmnopqrst.supabase.co",
     approvedPreviewProjectRef: "abcdefghijklmnopqrst"
   }), /does not match the approved project/);
 });
 
 test("Supabase URL is mandatory in every execution environment", () => {
-  for (const supabaseUrl of [undefined, "", "   "]) {
+  for (const supabaseUrl of ["", "   "]) {
     assert.throws(() => assertSupabaseEnvironmentSafe({
       vercelEnv: "preview",
+      nodeEnv: "production",
       supabaseUrl
     }), /Supabase URL is missing/);
   }
+
+  withEnvironment({ SUPABASE_URL: undefined }, () => {
+    assert.throws(() => assertSupabaseEnvironmentSafe({
+      vercelEnv: "preview",
+      nodeEnv: "production"
+    }), /Supabase URL is missing/);
+  });
 });
 
 test("Supabase URL must be an exact HTTPS project origin", () => {
@@ -99,6 +134,7 @@ test("Supabase URL must be an exact HTTPS project origin", () => {
     assert.throws(
       () => assertSupabaseEnvironmentSafe({
         vercelEnv: "preview",
+        nodeEnv: "production",
         supabaseUrl
       }),
       /configured Supabase URL|configured Supabase host/
@@ -108,23 +144,14 @@ test("Supabase URL must be an exact HTTPS project origin", () => {
 
 test("Server Supabase client requires server-only SUPABASE_URL and checks it before client creation", async () => {
   const { supabaseAdmin } = await import("../api/_lib/server.js");
-  const previous = {
-    vercelEnv: process.env.VERCEL_ENV,
-    nodeEnv: process.env.NODE_ENV,
-    vercel: process.env.VERCEL,
-    supabaseUrl: process.env.SUPABASE_URL,
-    viteSupabaseUrl: process.env.VITE_SUPABASE_URL,
-    serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY
-  };
-
-  try {
-    process.env.VERCEL_ENV = "preview";
-    process.env.NODE_ENV = "production";
-    process.env.VERCEL = "1";
-    process.env.SUPABASE_URL = productionUrl;
-    process.env.VITE_SUPABASE_URL = stagingUrl;
-    process.env.SUPABASE_SERVICE_ROLE_KEY = "unit-test-not-a-real-key";
-
+  withEnvironment({
+    VERCEL_ENV: "preview",
+    NODE_ENV: "production",
+    VERCEL: "1",
+    SUPABASE_URL: productionUrl,
+    VITE_SUPABASE_URL: stagingUrl,
+    SUPABASE_SERVICE_ROLE_KEY: "unit-test-not-a-real-key"
+  }, () => {
     assert.throws(
       () => supabaseAdmin(),
       /does not match the approved project/
@@ -135,29 +162,19 @@ test("Server Supabase client requires server-only SUPABASE_URL and checks it bef
       () => supabaseAdmin(),
       /Missing Supabase server configuration/
     );
-  } finally {
-    for (const [key, value] of Object.entries({
-      VERCEL_ENV: previous.vercelEnv,
-      NODE_ENV: previous.nodeEnv,
-      VERCEL: previous.vercel,
-      SUPABASE_URL: previous.supabaseUrl,
-      VITE_SUPABASE_URL: previous.viteSupabaseUrl,
-      SUPABASE_SERVICE_ROLE_KEY: previous.serviceRoleKey
-    })) {
-      if (value === undefined) delete process.env[key];
-      else process.env[key] = value;
-    }
-  }
+  });
 });
 
 test("PageSpeed checks environment safety before rate-limit and external API work", () => {
   const source = readFileSync(new URL("../api/pagespeed.js", import.meta.url), "utf8");
-  const factory = source.match(/function getSupabase\\(\\) \\{([\\s\\S]*?)\\n\\}/)?.[1];
+  const factoryStart = source.indexOf("function getSupabase() {");
+  const factoryEnd = source.indexOf("\n}", factoryStart);
+  const factory = source.slice(factoryStart, factoryEnd);
 
-  assert.ok(factory, "expected a getSupabase factory in api/pagespeed.js");
-  assert.match(source, /const url = process\\.env\\.SUPABASE_URL;/);
-  assert.doesNotMatch(source, /process\\.env\\.VITE_SUPABASE_URL/);
-  assert.match(source, /import \\{ assertSupabaseEnvironmentSafe \\} from "\.\\/_lib\\/environment\\.js";/);
+  assert.notEqual(factoryStart, -1, "expected a getSupabase factory in api/pagespeed.js");
+  assert.ok(source.includes("const url = process.env.SUPABASE_URL;"));
+  assert.ok(!source.includes("process.env.VITE_SUPABASE_URL"));
+  assert.ok(source.includes('import { assertSupabaseEnvironmentSafe } from "./_lib/environment.js";'));
 
   const guardIndex = factory.indexOf("assertSupabaseEnvironmentSafe({ supabaseUrl: url })");
   const clientIndex = factory.indexOf("createClient(url, key,");
