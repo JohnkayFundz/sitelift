@@ -86,7 +86,7 @@ test("Vercel development is treated as local and is restricted to staging", () =
 
 test("Missing, unknown, and conflicting runtime identities fail closed", () => {
   for (const options of [
-    { vercelEnv: undefined, nodeEnv: "production", vercel: undefined, supabaseUrl: stagingUrl },
+    { vercelEnv: null, nodeEnv: "production", vercel: undefined, supabaseUrl: stagingUrl },
     { vercelEnv: "staging", nodeEnv: "development", vercel: "1", supabaseUrl: stagingUrl },
     { vercelEnv: "preview ", nodeEnv: "production", vercel: "1", supabaseUrl: stagingUrl },
     { vercelEnv: undefined, nodeEnv: "development", vercel: "1", supabaseUrl: stagingUrl },
