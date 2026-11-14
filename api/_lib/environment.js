@@ -26,6 +26,16 @@ function resolveExecutionEnvironment({ vercelEnv, nodeEnv, vercel }) {
     return "local";
   }
 
+  // Local automated tests are isolated to the pinned staging project.
+  // This never grants access to the Production project.
+  if (
+    vercelEnv === undefined &&
+    vercel === undefined &&
+    nodeEnv === "test"
+  ) {
+    return "local";
+  }
+
   // Plain local Node/Vite development does not always set VERCEL_ENV.
   // A Vercel runtime must never be inferred to be local when its identity is absent.
   if (
