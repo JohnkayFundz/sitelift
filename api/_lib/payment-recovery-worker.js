@@ -81,17 +81,21 @@ export async function processClaimedPaymentRecovery({
   };
 
   try {
-    if (!secret) throw new RecoveryError("provider_not_configured", false);
+    if (!secret) throw new RecoveryError("provider_not_configured", true);
 
     const transaction = await verifyPaystackTransaction(reference, secret, fetchImpl);
 
+    if (transaction.status !== "success") {
+      throw new RecoveryError("provider_transaction_not_successful", true);
+    }
     if (
-      transaction.status !== "success" ||
       transaction.reference !== reference ||
       transaction.currency !== "NGN" ||
       claim.currency !== "NGN" ||
       !Number.isSafeInteger(Number(transaction.amount)) ||
-      Number(transaction.amount) !== Number(claim.amount)
+      Number(transaction.amount) !== Number(claim.amount) ||
+      !Number.isSafeInteger(Number(transaction.id)) ||
+      Number(transaction.id) <= 0
     ) {
       throw new RecoveryError("provider_transaction_mismatch", false);
     }
