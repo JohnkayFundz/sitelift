@@ -10,8 +10,10 @@ alter table public.payment_recovery_jobs
     or
     (
       artifact_sha256 is not null
+      and length(artifact_sha256) = 64
       and artifact_size_bytes between 8 and 26214400
-      and artifact_sha256 ~ '^[0-9a-f]{64}
+      and artifact_sha256 ~ '^[0-9a-f]{64}'
+    )
   );
 
 comment on column public.payment_recovery_jobs.artifact_sha256 is
