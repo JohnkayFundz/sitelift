@@ -20,18 +20,24 @@ test("PDF generator emits a minimal PDF document", () => {
   assert.equal(pdf.toString("utf8").endsWith("%%EOF"), true);
 });
 
-test("webhook processing claims payments atomically and frontend retries after stale claim", async () => {
+test("webhook durably enqueues signed events; worker owns payment processing", async () => {
   const { readFile } = await import("node:fs/promises");
-  const server = await readFile(new URL("../api/_lib/server.js", import.meta.url), "utf8");
   const webhook = await readFile(new URL("../api/paystack/webhook.js", import.meta.url), "utf8");
-  assert.match(server, /status\.eq\.pending,status\.eq\.initialization_unknown,and\(status\.eq\.processing,processing_started_at\.lt\./);
-  assert.match(server, /\.eq\("status", "processing"\)\.eq\("processing_started_at", nowIso\)/);
-  assert.match(webhook, /result\.status === "processing"[\s\S]*?json\(res, 200,[\s\S]*?duplicate: true/);
+  const worker = await readFile(new URL("../api/_lib/payment-recovery-worker.js", import.meta.url), "utf8");
+  const migration = await readFile(new URL("../supabase/migrations/202611140001_sitelift_durable_payment_recovery.sql", import.meta.url), "utf8");
+  assert.match(webhook, /rpc\("enqueue_payment_recovery_job"/);
+  assert.match(webhook, /accepted\?\.accepted !== true[\s\S]*?json\(res, 503/);
+  assert.doesNotMatch(webhook, /processVerifiedPaystackPayment/);
+  assert.match(worker, /claim_payment_recovery_job/);
+  assert.match(worker, /assert_payment_recovery_lease/);
+  assert.match(worker, /complete_payment_recovery_job/);
+  assert.match(worker, /fail_payment_recovery_job/);
+  assert.match(migration, /for update skip locked/i);
+  assert.match(migration, /interval '120 seconds'/);
   const app = await readFile(new URL("../src/App.jsx", import.meta.url), "utf8");
   assert.match(app, /retryTimer = window\.setTimeout[\s\S]*?\}, 185000\)/);
   assert.match(app, /clearTimeout\(retryTimer\)/);
-});
-test("recovery uses a body-only one-time code and never places it in an email URL", async () => {
+});test("recovery uses a body-only one-time code and never places it in an email URL", async () => {
   const { readFile } = await import("node:fs/promises");
   const status = await readFile(new URL("../api/paystack/status.js", import.meta.url), "utf8");
   const recovery = await readFile(new URL("../api/paystack/resend-link.js", import.meta.url), "utf8");
@@ -45,103 +51,37 @@ test("recovery uses a body-only one-time code and never places it in an email UR
   assert.match(recovery, /reportPage\.searchParams\.set\("reference", payment\.reference\)/);
   assert.doesNotMatch(recovery, /searchParams\.set\("token"/);
 });
-test("duplicate charge.success webhook leaves an existing paid record immutable", async () => {
+test("duplicate charge.success for an already-paid record is durably accepted without fulfillment", async () => {
   const reference = "sitelift_decb676a-e5fb-40eb-9ea6-e983b2a4840b_c2ad7387235540f0b4eacd86bcfb87b9";
   const secret = "unit-test-paystack-secret";
   const originalSecret = process.env.PAYSTACK_SECRET_KEY;
   process.env.PAYSTACK_SECRET_KEY = secret;
-
-  const payment = {
-    id: "payment-test-id",
-    audit_id: "audit-test-id",
-    reference,
-    amount: 250000,
-    currency: "NGN",
-    status: "paid",
-    pdf_path: "/reports/test.pdf",
-    paid_at: "2026-10-20T12:34:56.000Z",
-    webhook_processed_at: "2026-10-20T12:34:57.000Z",
-    download_token: "token_abc123",
-    token_expires_at: "2099-01-01T00:00:00.000Z",
-    processing_started_at: null
+  let rpcCalls = 0;
+  const db = { rpc: async (name, args) => {
+    rpcCalls += 1;
+    assert.equal(name, "enqueue_payment_recovery_job");
+    assert.equal(args.p_reference, reference);
+    return { data: [{ accepted: true, duplicate: true, already_paid: true }], error: null };
+  } };
+  const handler = createPaystackWebhookHandler({ getSupabaseAdmin: () => db });
+  const raw = Buffer.from(JSON.stringify({ event: "charge.success", data: { reference } }));
+  const signature = createHmac("sha512", secret).update(raw).digest("hex");
+  const response = {
+    statusCode: null, headers: {}, body: null,
+    status(code) { this.statusCode = code; return this; },
+    setHeader(name, value) { this.headers[name] = value; },
+    json(body) { this.body = body; return this; }
   };
-  const originalPayment = structuredClone(payment);
-  let updateCalls = 0;
-  let pdfCalls = 0;
-  let uploadCalls = 0;
-  const query = {
-    select() { return this; },
-    eq(column, value) {
-      if (column === "reference") assert.equal(value, reference);
-      return this;
-    },
-    maybeSingle: async () => ({ data: structuredClone(payment), error: null }),
-    update() {
-      updateCalls += 1;
-      return this;
-    }
-  };
-  const db = {
-    from(table) {
-      assert.equal(table, "audit_payments");
-      return query;
-    },
-    storage: {
-      from() {
-        return {
-          upload() {
-            uploadCalls += 1;
-            throw new Error("Duplicate processing must not upload a PDF");
-          }
-        };
-      }
-    }
-  };
-
   try {
-    const handler = createPaystackWebhookHandler({
-      processPayment: (incomingReference) => processVerifiedPaystackPayment(incomingReference, {
-        supabaseAdmin: () => db,
-        createAuditPdf: () => {
-          pdfCalls += 1;
-          throw new Error("Duplicate processing must not generate a PDF");
-        }
-      })
-    });
-    const raw = Buffer.from(JSON.stringify({
-      event: "charge.success",
-      data: { reference, status: "success", amount: 250000, currency: "NGN" }
-    }));
-    const signature = createHmac("sha512", secret).update(raw).digest("hex");
-    const response = {
-      statusCode: null,
-      headers: {},
-      body: null,
-      status(code) { this.statusCode = code; return this; },
-      setHeader(name, value) { this.headers[name] = value; },
-      json(body) { this.body = body; return this; }
-    };
-
-    await handler({
-      method: "POST",
-      headers: { "x-paystack-signature": signature },
-      body: raw
-    }, response);
-
+    await handler({ method: "POST", headers: { "x-paystack-signature": signature }, body: raw }, response);
     assert.equal(response.statusCode, 200);
-    assert.deepEqual(response.body, { received: true, duplicate: true });
-    assert.equal(updateCalls, 0, "Supabase update must never be called for a complete paid record");
-    assert.equal(pdfCalls, 0, "PDF generation must never run for a complete paid record");
-    assert.equal(uploadCalls, 0, "PDF storage upload must never run for a complete paid record");
-    assert.deepEqual(payment, originalPayment, "critical payment fields remain unchanged");
+    assert.deepEqual(response.body, { received: true, queued: true, duplicate: true, alreadyPaid: true });
+    assert.equal(rpcCalls, 1);
   } finally {
     if (originalSecret === undefined) delete process.env.PAYSTACK_SECRET_KEY;
     else process.env.PAYSTACK_SECRET_KEY = originalSecret;
   }
-});
-
-
-test("GET payment status is read-only and authorizes through the HttpOnly redemption cookie", async () => {
+});test("GET payment status is read-only and authorizes through the HttpOnly redemption cookie", async () => {
   const reference = "sitelift_decb676a-e5fb-40eb-9ea6-e983b2a4840b_c2ad7387235540f0b4eacd86bcfb87b9";
   const token = "a".repeat(64);
   let updateCalls = 0, selectCalls = 0, hashFilter = null;
@@ -274,326 +214,50 @@ test("explicit verification rejects invalid recovery code before payment reconci
   assert.equal(processCalls, 0);
   assert.equal(dbCalls, 0);
 });
-test("concurrent webhook delivery sees the real processing claim, and a failed worker can be retried", async () => {
+test("repeated charge.success deliveries rely on idempotent durable enqueue", async () => {
   const originalSecret = process.env.PAYSTACK_SECRET_KEY;
-  const originalFetch = globalThis.fetch;
   const secret = "unit-test-paystack-secret";
   process.env.PAYSTACK_SECRET_KEY = secret;
   const reference = "sitelift_decb676a-e5fb-40eb-9ea6-e983b2a4840b_c2ad7387235540f0b4eacd86bcfb87b9";
-  let releaseFirstVerification;
-  let firstVerificationStarted;
-  const firstStarted = new Promise(resolve => { firstVerificationStarted = resolve; });
-  const firstGate = new Promise(resolve => { releaseFirstVerification = resolve; });
-  let fetchCalls = 0;
-  globalThis.fetch = async () => {
-    fetchCalls += 1;
-    if (fetchCalls === 1) {
-      firstVerificationStarted();
-      await firstGate;
-    }
-    return { ok: true, json: async () => ({ status: true, data: {
-      status: "success", reference, currency: "NGN", amount: 250000, id: 123
-    } }) };
-  };
-  const h = paymentProcessingHarness({ uploadError: { message: "storage unavailable" } });
-  const handler = createPaystackWebhookHandler({
-    processPayment: incomingReference => processVerifiedPaystackPayment(incomingReference, {
-      supabaseAdmin: () => h.db,
-      createAuditPdf: () => Buffer.from("%PDF-test")
-    })
-  });
+  let enqueueCalls = 0;
+  const db = { rpc: async (name, args) => {
+    assert.equal(name, "enqueue_payment_recovery_job");
+    assert.equal(args.p_reference, reference);
+    enqueueCalls += 1;
+    return { data: [{
+      accepted: true,
+      duplicate: enqueueCalls > 1,
+      already_paid: false
+    }], error: null };
+  } };
+  const handler = createPaystackWebhookHandler({ getSupabaseAdmin: () => db });
+  const raw = Buffer.from(JSON.stringify({ event: "charge.success", data: { reference } }));
+  const signature = createHmac("sha512", secret).update(raw).digest("hex");
   const makeResponse = () => ({
     statusCode: null, headers: {}, body: null,
     status(code) { this.statusCode = code; return this; },
     setHeader(name, value) { this.headers[name] = value; },
     json(body) { this.body = body; return this; }
   });
-  const raw = Buffer.from(JSON.stringify({
-    event: "charge.success",
-    data: { reference, status: "success", amount: 250000, currency: "NGN" }
-  }));
-  const signature = createHmac("sha512", secret).update(raw).digest("hex");
-  const req = { method: "POST", headers: { "x-paystack-signature": signature }, body: raw };
-
   try {
-    const firstResponse = makeResponse();
-    const firstDelivery = handler(req, firstResponse);
-    await firstStarted;
-
-    const duplicateResponse = makeResponse();
-    await handler(req, duplicateResponse);
-    assert.equal(duplicateResponse.statusCode, 200);
-    assert.deepEqual(duplicateResponse.body, { received: true, duplicate: true, processing: true });
-    assert.equal(fetchCalls, 1, "the duplicate must not start a second Paystack verification while the claim is active");
-
-    releaseFirstVerification();
-    await firstDelivery;
-    assert.equal(firstResponse.statusCode, 500, "the first worker's storage failure should be retryable");
-    assert.equal(h.payment.status, "pending", "failed work should release the processing claim");
-    assert.equal(h.payment.processing_started_at, null);
-
-    h.setUploadError(null);
-    const retryResponse = makeResponse();
-    await handler(req, retryResponse);
-    assert.equal(retryResponse.statusCode, 200);
-    assert.deepEqual(retryResponse.body, { received: true, duplicate: false });
-    assert.equal(h.payment.status, "paid", "a later delivery should complete using the real payment processor");
-    assert.equal(h.payment.processing_started_at, null);
-    assert.equal(fetchCalls, 2);
+    const first = makeResponse();
+    const second = makeResponse();
+    await Promise.all([
+      handler({ method: "POST", headers: { "x-paystack-signature": signature }, body: raw }, first),
+      handler({ method: "POST", headers: { "x-paystack-signature": signature }, body: raw }, second)
+    ]);
+    assert.equal(first.statusCode, 200);
+    assert.equal(second.statusCode, 200);
+    assert.equal(enqueueCalls, 2);
+    assert.equal(first.body.queued, true);
+    assert.equal(second.body.queued, true);
+    assert.equal(first.body.duplicate, false);
+    assert.equal(second.body.duplicate, true);
   } finally {
-    releaseFirstVerification();
-    globalThis.fetch = originalFetch;
     if (originalSecret === undefined) delete process.env.PAYSTACK_SECRET_KEY;
     else process.env.PAYSTACK_SECRET_KEY = originalSecret;
   }
-});
-
-function paymentProcessingHarness({
-  uploadError: initialUploadError = null,
-  paymentOverrides = {}
-} = {}) {
-  let uploadError = initialUploadError;
-  let uploadCalls = 0;
-
-  const payment = {
-    id: "payment-1",
-    audit_id: "audit-1",
-    amount: 250000,
-    currency: "NGN",
-    status: "pending",
-    pdf_path: null,
-    download_token: "a".repeat(64),
-    token_expires_at: "2099-01-01T00:00:00.000Z",
-    processing_started_at: null,
-    reference:
-      "sitelift_decb676a-e5fb-40eb-9ea6-e983b2a4840b_c2ad7387235540f0b4eacd86bcfb87b9",
-    ...paymentOverrides
-  };
-
-  // Preserve existing test semantics: successful mutations only.
-  const updates = [];
-  const updateAttempts = [];
-  const successfulUpdates = [];
-  const rejectedUpdates = [];
-
-  function matchesUpdate(filters, orFilter) {
-    const basicMatch = filters.every(
-      ([key, value]) => payment[key] === value
-    );
-
-    if (!basicMatch) return false;
-    if (!orFilter) return true;
-
-    if (orFilter === "download_token.is.null,token_expires_at.is.null") {
-      return (
-        payment.download_token == null ||
-        payment.token_expires_at == null
-      );
-    }
-
-    const staleMatch = orFilter.match(
-      /processing_started_at\.lt\.([^,)]+)/
-    );
-
-    return (
-      (orFilter.includes("status.eq.pending") &&
-        payment.status === "pending") ||
-      (orFilter.includes("status.eq.initialization_unknown") &&
-        payment.status === "initialization_unknown") ||
-      (orFilter.includes("status.eq.processing") &&
-        payment.status === "processing" &&
-        payment.processing_started_at != null &&
-        staleMatch != null &&
-        Date.parse(payment.processing_started_at) <
-          Date.parse(staleMatch[1]))
-    );
-  }
-
-  function recordUpdateAttempt(filters, orFilter, values) {
-    const matched = matchesUpdate(filters, orFilter);
-    const attempt = {
-      filters: structuredClone(filters),
-      orFilter,
-      values: structuredClone(values),
-      matched
-    };
-
-    updateAttempts.push(attempt);
-
-    if (!matched) {
-      rejectedUpdates.push(attempt);
-      return false;
-    }
-
-    Object.assign(payment, structuredClone(values));
-    updates.push(structuredClone(values));
-    successfulUpdates.push(attempt);
-    return true;
-  }
-
-  const db = {
-    from(table) {
-      if (table === "audit_payments") {
-        return {
-          select() {
-            const filters = [];
-
-            return {
-              eq(key, value) {
-                filters.push([key, value]);
-                return this;
-              },
-
-              maybeSingle: async () => ({
-                data: filters.some(
-                  ([key, value]) => payment[key] !== value
-                )
-                  ? null
-                  : structuredClone(payment),
-                error: null
-              })
-            };
-          },
-
-          update(values) {
-            const filters = [];
-            let orFilter = null;
-            let wantsRow = false;
-
-            const query = {
-              eq(key, value) {
-                filters.push([key, value]);
-                return this;
-              },
-
-              or(value) {
-                orFilter = value;
-                return this;
-              },
-
-              select() {
-                wantsRow = true;
-                return this;
-              },
-
-              async maybeSingle() {
-                const matched = recordUpdateAttempt(
-                  filters,
-                  orFilter,
-                  values
-                );
-
-                if (!matched) {
-                  return { data: null, error: null };
-                }
-
-                return {
-                  data: wantsRow ? { id: payment.id } : null,
-                  error: null
-                };
-              },
-
-              then(resolve, reject) {
-                recordUpdateAttempt(filters, orFilter, values);
-                return Promise.resolve({ error: null }).then(
-                  resolve,
-                  reject
-                );
-              }
-            };
-
-            return query;
-          }
-        };
-      }
-
-      if (table === "audits") {
-        return {
-          select() {
-            return this;
-          },
-
-          eq() {
-            return this;
-          },
-
-          single: async () => ({
-            data: {
-              id: "audit-1",
-              target_url: "https://example.com",
-              final_url: "https://example.com/",
-              strategy: "mobile",
-              created_at: "2026-10-20T00:00:00.000Z",
-              report: {
-                scores: [],
-                metrics: [],
-                opportunities: []
-              }
-            },
-            error: null
-          })
-        };
-      }
-
-      throw new Error("Unexpected table " + table);
-    },
-
-    storage: {
-      from(bucket) {
-        assert.equal(bucket, "audit-reports");
-
-        return {
-          upload: async () => {
-            uploadCalls += 1;
-            return { error: uploadError };
-          }
-        };
-      }
-    }
-  };
-
-  return {
-    db,
-    payment,
-    updates,
-    updateAttempts,
-    successfulUpdates,
-    rejectedUpdates,
-    get uploadCalls() {
-      return uploadCalls;
-    },
-    setUploadError(value) {
-      uploadError = value;
-    }
-  };
-}
-
-function installControlledClock(initialTime) {
-  const RealDate = globalThis.Date;
-  let currentTime = initialTime;
-
-  globalThis.Date = class ControlledDate extends RealDate {
-    constructor(...args) {
-      super(...(args.length ? args : [currentTime]));
-    }
-
-    static now() {
-      return currentTime;
-    }
-  };
-
-  return {
-    advance(milliseconds) {
-      currentTime += milliseconds;
-    },
-
-    restore() {
-      globalThis.Date = RealDate;
-    }
-  };
-}
-
-test("stale worker cannot reset a newer worker's processing claim", async () => {
+});test("stale worker cannot reset a newer worker's processing claim", async () => {
   const originalSecret = process.env.PAYSTACK_SECRET_KEY;
   const originalFetch = globalThis.fetch;
   const clock = installControlledClock(
