@@ -37,7 +37,9 @@ test("webhook durably enqueues signed events; worker owns payment processing", a
   const app = await readFile(new URL("../src/App.jsx", import.meta.url), "utf8");
   assert.match(app, /retryTimer = window\.setTimeout[\s\S]*?\}, 185000\)/);
   assert.match(app, /clearTimeout\(retryTimer\)/);
-});test("recovery uses a body-only one-time code and never places it in an email URL", async () => {
+});
+
+test("recovery uses a body-only one-time code and never places it in an email URL", async () => {
   const { readFile } = await import("node:fs/promises");
   const status = await readFile(new URL("../api/paystack/status.js", import.meta.url), "utf8");
   const recovery = await readFile(new URL("../api/paystack/resend-link.js", import.meta.url), "utf8");
@@ -81,7 +83,9 @@ test("duplicate charge.success for an already-paid record is durably accepted wi
     if (originalSecret === undefined) delete process.env.PAYSTACK_SECRET_KEY;
     else process.env.PAYSTACK_SECRET_KEY = originalSecret;
   }
-});test("GET payment status is read-only and authorizes through the HttpOnly redemption cookie", async () => {
+});
+
+test("GET payment status is read-only and authorizes through the HttpOnly redemption cookie", async () => {
   const reference = "sitelift_decb676a-e5fb-40eb-9ea6-e983b2a4840b_c2ad7387235540f0b4eacd86bcfb87b9";
   const token = "a".repeat(64);
   let updateCalls = 0, selectCalls = 0, hashFilter = null;
@@ -257,7 +261,9 @@ test("repeated charge.success deliveries rely on idempotent durable enqueue", as
     if (originalSecret === undefined) delete process.env.PAYSTACK_SECRET_KEY;
     else process.env.PAYSTACK_SECRET_KEY = originalSecret;
   }
-});test("stale worker cannot reset a newer worker's processing claim", async () => {
+});
+
+test("stale worker cannot reset a newer worker's processing claim", async () => {
   const originalSecret = process.env.PAYSTACK_SECRET_KEY;
   const originalFetch = globalThis.fetch;
   const clock = installControlledClock(
