@@ -139,7 +139,7 @@ test("worker verifies transaction, fences ownership, uploads deterministic PDF a
         })
       };
     },
-    generatePdf: () => Buffer.from("%PDF-1.4\nunit-test")
+    generatePdf: () => Buffer.from("%PDF-1.4\nunit-test\n%%EOF")
   });
 
   assert.deepEqual(result, { status: "completed" });
@@ -212,7 +212,7 @@ test("worker stops immediately when the fencing RPC says its lease was lost", as
 
 
 test("retry reuses an existing object only after manifest digest and size verification", async () => {
-  const bytes = Buffer.from("%PDF-1.4\\npreviously-uploaded\\n%%EOF");
+  const bytes = Buffer.from("%PDF-1.4\npreviously-uploaded\n%%EOF");
   const { createHash } = await import("node:crypto");
   const manifest = {
     artifact_sha256: createHash("sha256").update(bytes).digest("hex"),
@@ -226,7 +226,7 @@ test("retry reuses an existing object only after manifest digest and size verifi
       ok: true,
       json: async () => ({ status: true, data: { status: "success", reference, currency: "NGN", amount: 250000, id: 987654 } })
     }),
-    generatePdf: () => { generationCalls += 1; return Buffer.from("%PDF-1.4\\nshould-not-be-used\\n%%EOF"); }
+    generatePdf: () => { generationCalls += 1; return Buffer.from("%PDF-1.4\nshould-not-be-used\n%%EOF"); }
   });
   assert.deepEqual(result, { status: "completed" });
   assert.equal(generationCalls, 0);
@@ -236,8 +236,8 @@ test("retry reuses an existing object only after manifest digest and size verifi
 
 test("existing object with mismatched digest fails closed before payment completion", async () => {
   const { createHash } = await import("node:crypto");
-  const expected = Buffer.from("%PDF-1.4\\nexpected\\n%%EOF");
-  const actual = Buffer.from("%PDF-1.4\\ntampered\\n%%EOF");
+  const expected = Buffer.from("%PDF-1.4\nexpected\n%%EOF");
+  const actual = Buffer.from("%PDF-1.4\ntampered\n%%EOF");
   const manifest = {
     artifact_sha256: createHash("sha256").update(expected).digest("hex"),
     artifact_size_bytes: expected.length
@@ -256,7 +256,8 @@ test("existing object with mismatched digest fails closed before payment complet
   assert.equal(calls.some(call => call.name === "complete_payment_recovery_job"), false);
   assert.equal(calls.some(call => call.name === "upload"), false);
 });
-\ntest("dispatcher requires the configured bearer secret and invokes a one-job bounded batch", async () => {
+
+test("dispatcher requires the configured bearer secret and invokes a one-job bounded batch", async () => {
   const originalSecret = process.env.CRON_SECRET;
   process.env.CRON_SECRET = "c".repeat(48);
   let calls = 0;
