@@ -9,25 +9,35 @@ const PROJECT_REF_BY_ENVIRONMENT = Object.freeze({
 
 function resolveExecutionEnvironment({ vercelEnv, nodeEnv, vercel }) {
   if (vercelEnv === "production" || vercelEnv === "preview") {
+    if (vercel !== "1" || nodeEnv !== "production") {
+      throw new Error(
+        "Refusing Supabase access because the execution environment is missing, unrecognized, or conflicting"
+      );
+    }
     return vercelEnv;
   }
 
   if (vercelEnv === "development") {
+    if (vercel !== "1" || nodeEnv !== "development") {
+      throw new Error(
+        "Refusing Supabase access because the execution environment is missing, unrecognized, or conflicting"
+      );
+    }
     return "local";
   }
 
   // Plain local Node/Vite development does not always set VERCEL_ENV.
-  // Only infer local in a non-Vercel process with an explicit development mode.
+  // A Vercel runtime must never be inferred to be local when its identity is absent.
   if (
     vercelEnv === undefined &&
-    vercel !== "1" &&
+    vercel === undefined &&
     nodeEnv === "development"
   ) {
     return "local";
   }
 
   throw new Error(
-    "Refusing Supabase access because the execution environment is missing or unrecognized"
+    "Refusing Supabase access because the execution environment is missing, unrecognized, or conflicting"
   );
 }
 
