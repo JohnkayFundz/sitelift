@@ -172,7 +172,7 @@ test("explicit verification alias redeems a one-time code into a report-bound se
   const reference = "sitelift_decb676a-e5fb-40eb-9ea6-e983b2a4840b_c2ad7387235540f0b4eacd86bcfb87b9";
   const code = "a".repeat(64);
   let rpcCalls = 0;
-  const db = { from: () => ({ select() { return this; }, eq() { return this; }, maybeSingle: async () => ({ data: { status: "paid", token_expires_at: "2099-01-01T00:00:00Z", delivery_blocked: false }, error: null }) }), rpc: async (name, args) => {
+  const db = { from: () => ({ select() { return this; }, eq() { return this; }, maybeSingle: async () => ({ data: { status: "paid", pdf_path: "decb676a-e5fb-40eb-9ea6-e983b2a4840b/" + reference + ".pdf", token_expires_at: "2099-01-01T00:00:00Z", delivery_blocked: false }, error: null }) }), rpc: async (name, args) => {
     rpcCalls += 1;
     assert.equal(name, "redeem_report_download");
     assert.equal(args.p_reference, reference);
