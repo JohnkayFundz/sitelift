@@ -66,7 +66,11 @@ export function createPaystackWebhookHandler({
       return json(res, 400, { error: "Invalid JSON" });
     }
 
-    if (!event || typeof event !== "object" || Array.isArray(event)) {\n      return json(res, 400, { error: "Invalid webhook event" });\n    }\n\n    if (event.event !== "charge.success") {
+    if (!event || typeof event !== "object" || Array.isArray(event)) {
+      return json(res, 400, { error: "Invalid webhook event" });
+    }
+
+    if (event.event !== "charge.success") {
       return json(res, 200, { received: true });
     }
 
