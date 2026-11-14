@@ -243,16 +243,14 @@ export async function processClaimedPaymentRecovery({
       ? manifest
       : null;
 
-    let audit = null;
-    if (!currentManifest) {
-      const { data, error } = await db.from("audits")
-        .select("id,target_url,final_url,strategy,report,created_at")
-        .eq("id", claim.audit_id)
-        .maybeSingle();
-      if (error) throw new RecoveryError("audit_lookup_failed", true);
-      if (!data) throw new RecoveryError("audit_missing", false);
-      audit = data;
-    }
+    // Load the audit record without generating a PDF. It is only consumed if
+    // the manifest exists but its object is absent, or no manifest exists.
+    const { data: audit, error: auditError } = await db.from("audits")
+      .select("id,target_url,final_url,strategy,report,created_at")
+      .eq("id", claim.audit_id)
+      .maybeSingle();
+    if (auditError) throw new RecoveryError("audit_lookup_failed", true);
+    if (!audit) throw new RecoveryError("audit_missing", false);
 
     const storage = db.storage.from("audit-reports");
     const persisted = await verifyOrCreateStoredArtifact({
