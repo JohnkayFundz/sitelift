@@ -151,6 +151,7 @@ test("Supabase URL must be an exact HTTPS project origin", () => {
     "http://pxlshpoooiuviszdgrzj.supabase.co",
     "https://user:password@pxlshpoooiuviszdgrzj.supabase.co",
     "https://pxlshpoooiuviszdgrzj.supabase.co:8443",
+    "https://pxlshpoooiuviszdgrzj.supabase.co:443",
     "https://pxlshpoooiuviszdgrzj.supabase.co/extra",
     "https://pxlshpoooiuviszdgrzj.supabase.co/?query=1",
     "https://pxlshpoooiuviszdgrzj.supabase.co/#fragment",
