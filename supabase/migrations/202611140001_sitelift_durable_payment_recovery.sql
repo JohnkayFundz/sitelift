@@ -61,8 +61,6 @@ create index payment_recovery_jobs_status_created_idx
 alter table public.payment_recovery_jobs enable row level security;
 revoke all on public.payment_recovery_jobs from public, anon, authenticated;
 revoke all on public.payment_recovery_jobs from service_role;
-grant select, insert, update, delete on public.payment_recovery_jobs to service_role;
-revoke all on public.audit_payments(processing_lease_token) from public, anon, authenticated;
 
 comment on table public.payment_recovery_jobs is
   'Durable, idempotent queue for server-side recovery of verified Paystack payment events. Service-role RPC access only.';
