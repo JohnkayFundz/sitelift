@@ -22,7 +22,7 @@ test("redemption waits while payment is processing and never creates a session",
   };
   const handler = createReportRedemptionHandler({
     getSupabaseAdmin: () => db,
-    processPayment: async () => ({ status: "processing" })
+    processPayment: async () => { throw new Error("redemption must not process payments"); }
   });
   const res = response();
   await handler({ method: "POST", body: { reference, recoveryCode: token } }, res);
@@ -33,7 +33,7 @@ test("redemption waits while payment is processing and never creates a session",
 
 test("recovery redemption accepts code only in POST body and returns report session path, not signed URL", async () => {
   let rpcCalls = 0;
-  const db = { from: () => ({ select() { return this; }, eq() { return this; }, maybeSingle: async () => ({ data: { status: "paid", token_expires_at: "2099-01-01T00:00:00Z", delivery_blocked: false }, error: null }) }), rpc: async (name, args) => {
+  const db = { from: () => ({ select() { return this; }, eq() { return this; }, maybeSingle: async () => ({ data: { status: "paid", pdf_path: "decb676a-e5fb-40eb-9ea6-e983b2a4840b/" + reference + ".pdf", token_expires_at: "2099-01-01T00:00:00Z", delivery_blocked: false }, error: null }) }), rpc: async (name, args) => {
     rpcCalls += 1;
     assert.equal(name, "redeem_report_download");
     assert.equal(args.p_reference, reference);
@@ -41,7 +41,7 @@ test("recovery redemption accepts code only in POST body and returns report sess
   } };
   const handler = createReportRedemptionHandler({
     getSupabaseAdmin: () => db,
-    processPayment: async () => ({ status: "paid" }),
+    processPayment: async () => { throw new Error("redemption must not process payments"); },
     createSessionToken: () => "b".repeat(64)
   });
   const res = response();
