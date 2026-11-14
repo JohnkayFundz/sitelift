@@ -212,7 +212,7 @@ test("worker stops immediately when the fencing RPC says its lease was lost", as
 
 
 test("retry reuses an existing object only after manifest digest and size verification", async () => {
-  const bytes = Buffer.from("%PDF-1.4\\npreviously-uploaded");
+  const bytes = Buffer.from("%PDF-1.4\\npreviously-uploaded\\n%%EOF");
   const { createHash } = await import("node:crypto");
   const manifest = {
     artifact_sha256: createHash("sha256").update(bytes).digest("hex"),
@@ -226,7 +226,7 @@ test("retry reuses an existing object only after manifest digest and size verifi
       ok: true,
       json: async () => ({ status: true, data: { status: "success", reference, currency: "NGN", amount: 250000, id: 987654 } })
     }),
-    generatePdf: () => { generationCalls += 1; return Buffer.from("%PDF-1.4\\nshould-not-be-used"); }
+    generatePdf: () => { generationCalls += 1; return Buffer.from("%PDF-1.4\\nshould-not-be-used\\n%%EOF"); }
   });
   assert.deepEqual(result, { status: "completed" });
   assert.equal(generationCalls, 0);
@@ -236,8 +236,8 @@ test("retry reuses an existing object only after manifest digest and size verifi
 
 test("existing object with mismatched digest fails closed before payment completion", async () => {
   const { createHash } = await import("node:crypto");
-  const expected = Buffer.from("%PDF-1.4\\nexpected");
-  const actual = Buffer.from("%PDF-1.4\\ntampered");
+  const expected = Buffer.from("%PDF-1.4\\nexpected\\n%%EOF");
+  const actual = Buffer.from("%PDF-1.4\\ntampered\\n%%EOF");
   const manifest = {
     artifact_sha256: createHash("sha256").update(expected).digest("hex"),
     artifact_size_bytes: expected.length
