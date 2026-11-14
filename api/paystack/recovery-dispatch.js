@@ -27,7 +27,7 @@ export function createPaymentRecoveryDispatcher({
     }
 
     try {
-      const summary = await runBatch({ maxJobs: 2, budgetMs: 45_000 });
+      const summary = await runBatch({ maxJobs: 1, budgetMs: 45_000 });
       return json(res, 200, { ok: true, ...summary });
     } catch (error) {
       console.error("Payment recovery dispatcher failed", error?.message);
