@@ -89,6 +89,15 @@ function parseSupabaseProjectRef(supabaseUrl) {
     );
   }
 
+  // Require the exact canonical project origin. WHATWG URL parsing removes
+  // an explicitly supplied default :443 port, so checking parsedUrl.port
+  // alone cannot enforce the no-explicit-port contract.
+  if (supabaseUrl !== `https://${match[1]}.supabase.co`) {
+    throw new Error(
+      "Refusing Supabase access because the configured Supabase URL must be the exact canonical project origin"
+    );
+  }
+
   return match[1];
 }
 
