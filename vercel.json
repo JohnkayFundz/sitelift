@@ -40,5 +40,11 @@
       "source": "/audit/:id",
       "destination": "/index.html"
     }
+  ],
+  "crons": [
+    {
+      "path": "/api/paystack/recovery-dispatch",
+      "schedule": "* * * * *"
+    }
   ]
 }
