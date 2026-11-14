@@ -20,7 +20,8 @@ function rpcRow(data) {
 
 function artifactIdentity(bytes) {
   if (!Buffer.isBuffer(bytes) || bytes.length < 8 || bytes.length > MAX_PDF_BYTES ||
-    bytes.subarray(0, 5).toString() !== "%PDF-") {
+    bytes.subarray(0, 5).toString() !== "%PDF-" ||
+    !bytes.toString("latin1").trimEnd().endsWith("%%EOF")) {
     throw new RecoveryError("pdf_integrity_invalid", false);
   }
   return {
